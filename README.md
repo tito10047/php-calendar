@@ -1,4 +1,4 @@
-[![PHP Tests](https://github.com/tito10047/monyk-calendar/actions/workflows/symfony.yml/badge.svg)](https://github.com/tito10047/monyk-calendar/actions/workflows/symfony.yml)
+[![PHP Tests](https://github.com/tito10047/php-calendar/actions/workflows/symfony.yml/badge.svg)](https://github.com/tito10047/php-calendar/actions/workflows/symfony.yml)
 
 # Plain PHP Calendar Package
 
