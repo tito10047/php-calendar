@@ -1,4 +1,6 @@
 <?php
+
+declare(strict_types=1);
 /**
  * Created by PhpStorm.
  * User: Jozef Môstka
@@ -8,20 +10,15 @@
 
 namespace Tito10047\Calendar\Renderer;
 
-
-use Tito10047\Calendar\Interface\DateTimeImmutable;
 use Tito10047\Calendar\Interface\DayNameRendererInterface;
 use Tito10047\Calendar\Interface\WeekRowRendererInterface;
 
 class MonthRenderer implements \Tito10047\Calendar\Interface\MonthRendererInterface
 {
-
-
     public function __construct(
         private DayNameRendererInterface $dayNameRenderer,
         private WeekRowRendererInterface $weekRowRenderer
-    )
-    {
+    ) {
     }
 
 
@@ -29,15 +26,15 @@ class MonthRenderer implements \Tito10047\Calendar\Interface\MonthRendererInterf
     {
         $html = "<table class='calendar'>";
         $html .= "<thead><tr>";
-        foreach($headers as $day) {
+        foreach ($headers as $day) {
             $name = $this->dayNameRenderer->renderDayName($day);
             $html .= "<th class='day-name'>{$name}</th>";
         }
         $html .= "</tr></thead>";
         $html .= "<tbody>";
-        foreach($dayRows as $row) {
+        foreach ($dayRows as $row) {
             $html .= "<tr class='week'>";
-            $html .= $this->weekRowRenderer->renderWeekRow((int)$month->format("n"),...$row);
+            $html .= $this->weekRowRenderer->renderWeekRow((int)$month->format("n"), ...$row);
             $html .= "</tr>";
         }
         $html .= "</tbody>";

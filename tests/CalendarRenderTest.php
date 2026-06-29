@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Tito10047\Calendar\Tests;
 
 use DateTimeImmutable;
@@ -9,24 +11,21 @@ use Tito10047\Calendar\Enum\CalendarType;
 use Tito10047\Calendar\Enum\DayName;
 use Tito10047\Calendar\Renderer;
 
-
 class CalendarRenderTest extends TestCase
 {
-    public function testRenderDays():void
+    public function testRenderDays(): void
     {
-        $date = new DateTimeImmutable();
-        $date = $date->setDate($date->format('Y'), $date->format('m'), 5);
+        // November 2024 with Monday start: always 5 weeks (Oct 28 – Dec 01), 35 cells.
         $calendar = new Calendar(
-            $date,
+            new DateTimeImmutable('2024-11-05'),
             CalendarType::Monthly,
             DayName::Monday,
         );
-        $renderer = Renderer::factory(CalendarType::Monthly,'calendar');
+        $renderer = Renderer::factory(CalendarType::Monthly, 'calendar');
         $html = $renderer->render($calendar);
         $this->assertNotEmpty($html);
-        echo($html);
-        $this->assertSame(6,substr_count($html, '<tr>'));
-        $this->assertSame(35,substr_count($html, '<td'));
-        $this->assertSame(1,substr_count($html, 'today'));
+        // 1 header <tr> + 5 week <tr> from WeekRowRenderer
+        $this->assertSame(6, substr_count($html, '<tr>'));
+        $this->assertSame(35, substr_count($html, '<td'));
     }
 }

@@ -1,4 +1,6 @@
 <?php
+
+declare(strict_types=1);
 /**
  * Created by PhpStorm.
  * User: Jozef Môstka
@@ -13,5 +15,5 @@ use Tito10047\Calendar\Enum\CalendarType;
 
 interface EventRendererInterface
 {
-    public function renderEvent(CalendarType $type, DateTimeImmutable $date, EventInterface $event):string;
+    public function renderEvent(CalendarType $type, DateTimeImmutable $date, EventInterface $event): string;
 }

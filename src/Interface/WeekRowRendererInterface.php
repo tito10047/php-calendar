@@ -1,4 +1,6 @@
 <?php
+
+declare(strict_types=1);
 /**
  * Created by PhpStorm.
  * User: Jozef Môstka
@@ -7,8 +9,6 @@
  */
 
 namespace Tito10047\Calendar\Interface;
-
-use Tito10047\Calendar\Enum\DayName;
 
 interface WeekRowRendererInterface
 {

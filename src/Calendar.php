@@ -1,4 +1,6 @@
 <?php
+
+declare(strict_types=1);
 /**
  * Created by PhpStorm.
  * User: Jozef Môstka
@@ -17,7 +19,7 @@ use Tito10047\Calendar\Interface\DaysGeneratorInterface;
 
 final class Calendar implements CalendarInterface
 {
-    /** @var DateTimeImmutable[] */
+    /** @var non-empty-list<DateTimeImmutable> */
     private array $days;
 
 
@@ -25,14 +27,15 @@ final class Calendar implements CalendarInterface
         private readonly DateTimeImmutable $date,
         private readonly DaysGeneratorInterface $daysGenerator = CalendarType::Monthly,
         private readonly DayName $startDay = DayName::Monday,
-        /** @var DateTimeImmutable[] $disabledDays */
+        /** @var array<string, DateTimeImmutable> $disabledDays */
         private readonly array $disabledDays = [],
         private ?DayDataLoaderInterface $dataLoader = null
     ) {
-        $this->days = $this->daysGenerator->getDays($this->date, $this->startDay);
-        if (count($this->days) === 0) {
+        $days = $this->daysGenerator->getDays($this->date, $this->startDay);
+        if (count($days) === 0) {
             throw new \InvalidArgumentException('Day generator returned no days');
         }
+        $this->days = $days;
     }
 
     public function getDate(): DateTimeImmutable
@@ -47,10 +50,10 @@ final class Calendar implements CalendarInterface
             $from = $this->days[0];
         }
         if (!$to) {
-            $to = end($this->days);
+            $to = $this->days[array_key_last($this->days)];
         }
-		$from = $from->setTime(0, 0, 0);
-		$to = $to->setTime(0, 0, 0);
+        $from = $from->setTime(0, 0, 0);
+        $to = $to->setTime(0, 0, 0);
         $current = clone $from;
         $days = [];
         while ($current <= $to) {
@@ -64,7 +67,7 @@ final class Calendar implements CalendarInterface
     public function disableDays(DateTimeImmutable ...$days): self
     {
         $disabledDays = $this->disabledDays;
-        foreach($days as $day){
+        foreach ($days as $day) {
             $disabledDays[$day->format('Y-m-d')] = $day;
         }
         return new self(
@@ -79,9 +82,9 @@ final class Calendar implements CalendarInterface
     public function disableDaysByName(DayName ...$daysToDisable): static
     {
         $disabled = [];
-        foreach($this->days as $day){
-            foreach($daysToDisable as $dayName){
-                if (DayName::fromDate($day) === $dayName){
+        foreach ($this->days as $day) {
+            foreach ($daysToDisable as $dayName) {
+                if (DayName::fromDate($day) === $dayName) {
                     $disabled[] = $day;
                 }
             }
@@ -92,7 +95,7 @@ final class Calendar implements CalendarInterface
     public function disableWeek(int $weekNum): self
     {
         $disabled = [];
-        foreach($this->days as $day){
+        foreach ($this->days as $day) {
             if ((int)$day->format('W') === $weekNum) {
                 $disabled[] = $day;
             }
@@ -146,13 +149,13 @@ final class Calendar implements CalendarInterface
         $today = date('Y-m-d');
         $rows = [];
         $firstDay = $days[0];
-        $lastDay = end($days);
-        $this->dataLoader?->load($firstDay,$lastDay);
+        $lastDay = $days[array_key_last($days)];
+        $this->dataLoader?->load($firstDay, $lastDay);
         while (count($days) > 0) {
             $row = [];
             $firstDay = $days[0];
             $weekNum = (int)$firstDay->format('W');
-            for ($i = (int)$firstDay->format("N"); $i <=7 and count($days) > 0; $i++) {
+            for ($i = (int)$firstDay->format("N"); $i <= 7 and count($days) > 0; $i++) {
                 $day = array_shift($days);
                 $dayElm = new Day(
                     date: $day,
@@ -160,9 +163,9 @@ final class Calendar implements CalendarInterface
                     today: $day->format('Y-m-d') === $today,
                     enabled: !array_key_exists($day->format('Y-m-d'), $this->disabledDays),
                 );
-                if ($this->dataLoader){
+                if ($this->dataLoader) {
                     $dayElm = $dayElm->withData(
-                        data: $this->dataLoader?->getData($day)
+                        data: $this->dataLoader->getData($day)
                     );
                 }
                 $row[$i] = $dayElm;
@@ -180,7 +183,7 @@ final class Calendar implements CalendarInterface
         return array_key_exists($day->format('Y-m-d'), $this->disabledDays);
     }
 
-    public function getStartDay():DayName
+    public function getStartDay(): DayName
     {
         return $this->startDay;
     }
