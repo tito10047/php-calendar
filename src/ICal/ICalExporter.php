@@ -8,7 +8,16 @@ use DateTimeImmutable;
 use Tito10047\Calendar\Recurrence\RecurrenceRule;
 
 /**
- * Fluent RFC 5545 iCal exporter.
+ * Fluent, immutable RFC 5545 iCal exporter.
+ *
+ * All mutating methods (calendarName, addEvent, …) return a new clone — the
+ * original instance is never modified.
+ *
+ * Timezone handling:
+ *   - UTC datetimes are serialised with the Z suffix: DTSTART:20241101T120000Z
+ *   - Named IANA timezone datetimes keep their zone: DTSTART;TZID=Europe/London:20241101T120000
+ *   - Numeric-offset timezones (+01:00) are normalised to UTC on export (offset information
+ *     is lost — pass a proper DateTimeZone('Europe/Berlin') if you need to preserve the zone).
  *
  * Usage:
  *   $ics = (new ICalExporter())
@@ -101,10 +110,10 @@ final class ICalExporter
             $lines[] = 'BEGIN:VEVENT';
             $lines[] = 'UID:' . $event->uid;
             $lines[] = 'DTSTAMP:' . $now->format('Ymd\THis\Z');
-            $lines[] = 'DTSTART:' . $event->dtStart->format('Ymd\THis\Z');
+            $lines[] = $this->formatDtProp('DTSTART', $event->dtStart);
 
             if ($event->dtEnd !== null) {
-                $lines[] = 'DTEND:' . $event->dtEnd->format('Ymd\THis\Z');
+                $lines[] = $this->formatDtProp('DTEND', $event->dtEnd);
             }
 
             $lines[] = 'SUMMARY:' . $this->escapeText($event->summary ?? '');
@@ -130,6 +139,29 @@ final class ICalExporter
     // -------------------------------------------------------------------------
     // Helpers
     // -------------------------------------------------------------------------
+
+    /**
+     * Serialise a datetime property respecting the original timezone.
+     *
+     * UTC / numeric-offset → "PROPNAME:YYYYMMDDTHHmmssZ"
+     * Named IANA timezone  → "PROPNAME;TZID=Zone/Name:YYYYMMDDTHHmmss"
+     */
+    private function formatDtProp(string $propName, DateTimeImmutable $dt): string
+    {
+        $tzName = $dt->getTimezone()->getName();
+
+        // Numeric offset (e.g. +01:00, -05:30) — normalise to UTC
+        if (preg_match('/^[+-]\d{2}:\d{2}$/', $tzName)) {
+            $tzName = 'UTC';
+        }
+
+        if ($tzName === 'UTC') {
+            return $propName . ':' . $dt->setTimezone(new \DateTimeZone('UTC'))->format('Ymd\THis\Z');
+        }
+
+        // Named IANA timezone — preserve it with TZID parameter
+        return $propName . ';TZID=' . $tzName . ':' . $dt->format('Ymd\THis');
+    }
 
     /**
      * Fold long lines at 75 octets per RFC 5545 §3.1.
