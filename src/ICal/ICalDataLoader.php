@@ -15,10 +15,12 @@ use Tito10047\Calendar\Interface\DayDataLoaderInterface;
  *   $loader = ICalDataLoader::fromEvents($parser->parseFile('calendar.ics'));
  *   $calendar = (new Calendar(new DateTimeImmutable(), CalendarType::Monthly))
  *       ->setDataLoader($loader);
+ *
+ * Each Day::$data will be a list<ICalEvent> for that date.
  */
 final class ICalDataLoader implements DayDataLoaderInterface
 {
-    /** @var array<string, list<array<string, mixed>>> Keyed by Y-m-d */
+    /** @var array<string, list<ICalEvent>> Keyed by Y-m-d */
     private array $byDate = [];
 
     /** @param list<ICalEvent> $events */
@@ -36,13 +38,13 @@ final class ICalDataLoader implements DayDataLoaderInterface
 
         foreach ($this->events as $event) {
             foreach ($event->occurrences($from, $to) as $date) {
-                $this->byDate[$date->format('Y-m-d')][] = $event->toArray();
+                $this->byDate[$date->format('Y-m-d')][] = $event;
             }
         }
     }
 
     /**
-     * @return array<mixed>
+     * @return list<ICalEvent>
      */
     public function getData(DateTimeImmutable $date): array
     {

@@ -58,7 +58,7 @@ final class ICalEvent
     }
 
     /**
-     * Convert to a plain array for use as day data in Calendar.
+     * Serialize to a plain array — useful for caching or passing to external systems.
      *
      * @return array<string, mixed>
      */

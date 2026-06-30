@@ -149,7 +149,7 @@ class ICalTest extends TestCase
                 if ($day->date->format('Y-m-d') === '2024-11-05') {
                     $this->assertIsArray($day->data);
                     $this->assertNotEmpty($day->data);
-                    $this->assertSame('Team meeting', $day->data[0]['summary']);
+                    $this->assertSame('Team meeting', $day->data[0]->summary);
                     $hasMeeting = true;
                 }
             }

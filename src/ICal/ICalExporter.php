@@ -23,7 +23,7 @@ use Tito10047\Calendar\Recurrence\RecurrenceRule;
  */
 final class ICalExporter
 {
-    /** @var list<array<string, mixed>> */
+    /** @var list<ICalEvent> */
     private array $events = [];
 
     private string $calendarName = 'Calendar';
@@ -45,15 +45,15 @@ final class ICalExporter
         ?string $uid = null,
     ): self {
         $clone           = clone $this;
-        $clone->events[] = [
-            'title'       => $title,
-            'from'        => $from,
-            'to'          => $to,
-            'description' => $description,
-            'location'    => $location,
-            'uid'         => $uid ?? $this->generateUid(),
-            'rrule'       => null,
-        ];
+        $clone->events[] = new ICalEvent(
+            uid:         $uid ?? $this->generateUid(),
+            dtStart:     $from,
+            dtEnd:       $to,
+            summary:     $title,
+            description: $description,
+            location:    $location,
+            rrule:       null,
+        );
         return $clone;
     }
 
@@ -66,30 +66,22 @@ final class ICalExporter
         ?string $uid = null,
     ): self {
         $clone           = clone $this;
-        $clone->events[] = [
-            'title'       => $title,
-            'from'        => $start,
-            'to'          => null,
-            'description' => $description,
-            'location'    => $location,
-            'uid'         => $uid ?? $this->generateUid(),
-            'rrule'       => $rule,
-        ];
+        $clone->events[] = new ICalEvent(
+            uid:         $uid ?? $this->generateUid(),
+            dtStart:     $start,
+            dtEnd:       null,
+            summary:     $title,
+            description: $description,
+            location:    $location,
+            rrule:       $rule,
+        );
         return $clone;
     }
 
     public function addICalEvent(ICalEvent $event): self
     {
         $clone           = clone $this;
-        $clone->events[] = [
-            'title'       => $event->summary ?? '',
-            'from'        => $event->dtStart,
-            'to'          => $event->dtEnd,
-            'description' => $event->description,
-            'location'    => $event->location,
-            'uid'         => $event->uid,
-            'rrule'       => $event->rrule,
-        ];
+        $clone->events[] = $event;
         return $clone;
     }
 
@@ -107,24 +99,24 @@ final class ICalExporter
 
         foreach ($this->events as $event) {
             $lines[] = 'BEGIN:VEVENT';
-            $lines[] = 'UID:' . $event['uid'];
+            $lines[] = 'UID:' . $event->uid;
             $lines[] = 'DTSTAMP:' . $now->format('Ymd\THis\Z');
-            $lines[] = 'DTSTART:' . $event['from']->format('Ymd\THis\Z');
+            $lines[] = 'DTSTART:' . $event->dtStart->format('Ymd\THis\Z');
 
-            if ($event['to'] !== null) {
-                $lines[] = 'DTEND:' . $event['to']->format('Ymd\THis\Z');
+            if ($event->dtEnd !== null) {
+                $lines[] = 'DTEND:' . $event->dtEnd->format('Ymd\THis\Z');
             }
 
-            $lines[] = 'SUMMARY:' . $this->escapeText((string) $event['title']);
+            $lines[] = 'SUMMARY:' . $this->escapeText($event->summary ?? '');
 
-            if ($event['description'] !== null) {
-                $lines[] = 'DESCRIPTION:' . $this->escapeText($event['description']);
+            if ($event->description !== null) {
+                $lines[] = 'DESCRIPTION:' . $this->escapeText($event->description);
             }
-            if ($event['location'] !== null) {
-                $lines[] = 'LOCATION:' . $this->escapeText($event['location']);
+            if ($event->location !== null) {
+                $lines[] = 'LOCATION:' . $this->escapeText($event->location);
             }
-            if ($event['rrule'] instanceof RecurrenceRule) {
-                $lines[] = 'RRULE:' . $event['rrule']->toRruleString();
+            if ($event->rrule !== null) {
+                $lines[] = 'RRULE:' . $event->rrule->toRruleString();
             }
 
             $lines[] = 'END:VEVENT';
