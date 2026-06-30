@@ -10,24 +10,7 @@ use Tito10047\Calendar\Enum\DayName;
 /**
  * Immutable value object representing an RFC 5545 RRULE.
  *
- * Supported rule parts: FREQ, INTERVAL, COUNT, UNTIL, BYDAY, BYMONTH, BYSETPOS.
- *
- * Build via static factories:
- *   RecurrenceRule::daily()
- *   RecurrenceRule::weekly()
- *   RecurrenceRule::monthly()
- *   RecurrenceRule::yearly()
- *   RecurrenceRule::fromRrule('FREQ=WEEKLY;BYDAY=MO,WE,FR')
- *
- * Then constrain via immutable wither methods:
- *   ->onDays(DayName::Monday, DayName::Friday)
- *   ->onNthWeekday(1, DayName::Monday)   // first Monday of month
- *   ->every(2)                           // interval
- *   ->limitTo(10)
- *   ->until(new DateTimeImmutable('2024-12-31'))
- *
- * Finally expand to concrete occurrences:
- *   $dates = $rule->expand($from, $to);  // DateTimeImmutable[]
+ * Supported rule parts: FREQ, INTERVAL, COUNT, UNTIL, BYDAY, BYMONTH, BYMONTHDAY, BYSETPOS.
  */
 final class RecurrenceRule
 {
@@ -40,14 +23,18 @@ final class RecurrenceRule
     /** @var list<int>|null BYMONTH month numbers 1-12 */
     private readonly ?array $byMonth;
 
+    /** @var list<int>|null BYMONTHDAY day-of-month numbers 1-31 */
+    private readonly ?array $byMonthDay;
+
     /** @var list<string> EXDATE exclusion dates in Y-m-d format */
     private readonly array $exDates;
 
     /**
-     * @param list<DayName>                $byDay
-     * @param array<int, DayName>|null     $byNthWeekday
-     * @param list<int>|null               $byMonth
-     * @param list<string>                 $exDates
+     * @param list<DayName>            $byDay
+     * @param array<int, DayName>|null $byNthWeekday
+     * @param list<int>|null           $byMonth
+     * @param list<int>|null           $byMonthDay
+     * @param list<string>             $exDates
      */
     private function __construct(
         private readonly Frequency $frequency,
@@ -57,11 +44,13 @@ final class RecurrenceRule
         array $byDay,
         ?array $byNthWeekday,
         ?array $byMonth,
+        ?array $byMonthDay,
         array $exDates,
     ) {
         $this->byDay        = $byDay;
         $this->byNthWeekday = $byNthWeekday;
         $this->byMonth      = $byMonth;
+        $this->byMonthDay   = $byMonthDay;
         $this->exDates      = $exDates;
     }
 
@@ -71,29 +60,24 @@ final class RecurrenceRule
 
     public static function daily(): self
     {
-        return new self(Frequency::Daily, 1, null, null, [], null, null, []);
+        return new self(Frequency::Daily, 1, null, null, [], null, null, null, []);
     }
 
     public static function weekly(): self
     {
-        return new self(Frequency::Weekly, 1, null, null, [], null, null, []);
+        return new self(Frequency::Weekly, 1, null, null, [], null, null, null, []);
     }
 
     public static function monthly(): self
     {
-        return new self(Frequency::Monthly, 1, null, null, [], null, null, []);
+        return new self(Frequency::Monthly, 1, null, null, [], null, null, null, []);
     }
 
     public static function yearly(): self
     {
-        return new self(Frequency::Yearly, 1, null, null, [], null, null, []);
+        return new self(Frequency::Yearly, 1, null, null, [], null, null, null, []);
     }
 
-    /**
-     * Parse a raw RRULE string (with or without the "RRULE:" prefix).
-     *
-     * Supports: FREQ, INTERVAL, COUNT, UNTIL, BYDAY, BYMONTH.
-     */
     public static function fromRrule(string $rrule): self
     {
         $rrule = str_starts_with($rrule, 'RRULE:') ? substr($rrule, 6) : $rrule;
@@ -108,10 +92,9 @@ final class RecurrenceRule
         $count     = isset($parts['COUNT']) ? (int) $parts['COUNT'] : null;
         $until     = null;
         if (isset($parts['UNTIL'])) {
-            $raw = $parts['UNTIL'];
-            // Normalise: 20241231T000000Z or 20241231
+            $raw     = $parts['UNTIL'];
             $dateStr = strlen($raw) >= 8 ? substr($raw, 0, 8) : $raw;
-            $until = DateTimeImmutable::createFromFormat('Ymd', $dateStr);
+            $until   = DateTimeImmutable::createFromFormat('Ymd', $dateStr);
             if ($until === false) {
                 throw new \InvalidArgumentException("Cannot parse UNTIL date: {$raw}");
             }
@@ -129,7 +112,12 @@ final class RecurrenceRule
             $byMonth = array_map('intval', explode(',', $parts['BYMONTH']));
         }
 
-        return new self($frequency, $interval, $count, $until, $byDay, $byNthWeekday, $byMonth, []);
+        $byMonthDay = null;
+        if (isset($parts['BYMONTHDAY'])) {
+            $byMonthDay = array_map('intval', explode(',', $parts['BYMONTHDAY']));
+        }
+
+        return new self($frequency, $interval, $count, $until, $byDay, $byNthWeekday, $byMonth, $byMonthDay, []);
     }
 
     // -------------------------------------------------------------------------
@@ -146,11 +134,11 @@ final class RecurrenceRule
             array_values($days),
             null,
             $this->byMonth,
+            $this->byMonthDay,
             $this->exDates,
         );
     }
 
-    /** nth = 1 for first, -1 for last, etc. */
     public function onNthWeekday(int $nth, DayName $day): self
     {
         return new self(
@@ -161,6 +149,7 @@ final class RecurrenceRule
             [],
             [$nth => $day],
             $this->byMonth,
+            $this->byMonthDay,
             $this->exDates,
         );
     }
@@ -175,11 +164,11 @@ final class RecurrenceRule
             $this->byDay,
             $this->byNthWeekday,
             $this->byMonth,
+            $this->byMonthDay,
             $this->exDates,
         );
     }
 
-    /** Limit expansion to $occurrences results. Throws if $occurrences < 1. */
     public function limitTo(int $occurrences): self
     {
         if ($occurrences < 1) {
@@ -193,6 +182,7 @@ final class RecurrenceRule
             $this->byDay,
             $this->byNthWeekday,
             $this->byMonth,
+            $this->byMonthDay,
             $this->exDates,
         );
     }
@@ -207,11 +197,11 @@ final class RecurrenceRule
             $this->byDay,
             $this->byNthWeekday,
             $this->byMonth,
+            $this->byMonthDay,
             $this->exDates,
         );
     }
 
-    /** Add exclusion dates (EXDATE). Can be called multiple times. */
     public function excluding(DateTimeImmutable ...$dates): self
     {
         $exDates = $this->exDates;
@@ -226,7 +216,40 @@ final class RecurrenceRule
             $this->byDay,
             $this->byNthWeekday,
             $this->byMonth,
+            $this->byMonthDay,
             array_values(array_unique($exDates)),
+        );
+    }
+
+    /** Set BYMONTH constraint (month numbers 1–12). */
+    public function onMonths(int ...$months): self
+    {
+        return new self(
+            $this->frequency,
+            $this->interval,
+            $this->count,
+            $this->until,
+            $this->byDay,
+            $this->byNthWeekday,
+            array_values($months),
+            $this->byMonthDay,
+            $this->exDates,
+        );
+    }
+
+    /** Set BYMONTHDAY constraint (day-of-month numbers 1–31). */
+    public function onMonthDays(int ...$days): self
+    {
+        return new self(
+            $this->frequency,
+            $this->interval,
+            $this->count,
+            $this->until,
+            $this->byDay,
+            $this->byNthWeekday,
+            $this->byMonth,
+            array_values($days),
+            $this->exDates,
         );
     }
 
@@ -234,11 +257,7 @@ final class RecurrenceRule
     // Expansion
     // -------------------------------------------------------------------------
 
-    /**
-     * Expand the rule to all concrete occurrences within [from, to] inclusive.
-     *
-     * @return list<DateTimeImmutable>
-     */
+    /** @return list<DateTimeImmutable> */
     public function expand(DateTimeImmutable $from, DateTimeImmutable $to): array
     {
         $from  = $from->setTime(0, 0, 0);
@@ -247,7 +266,7 @@ final class RecurrenceRule
 
         $candidates = $this->generateCandidates($from, $to);
 
-        $results = [];
+        $results  = [];
         $hitCount = 0;
         foreach ($candidates as $date) {
             if (isset($exSet[$date->format('Y-m-d')])) {
@@ -266,7 +285,7 @@ final class RecurrenceRule
     }
 
     // -------------------------------------------------------------------------
-    // Serialisation helpers
+    // Serialisation
     // -------------------------------------------------------------------------
 
     public function toRruleString(): string
@@ -298,38 +317,29 @@ final class RecurrenceRule
         if ($this->byMonth !== null) {
             $parts[] = 'BYMONTH=' . implode(',', $this->byMonth);
         }
+        if ($this->byMonthDay !== null) {
+            $parts[] = 'BYMONTHDAY=' . implode(',', $this->byMonthDay);
+        }
 
         return implode(';', $parts);
     }
 
-    private static function dayToRruleCode(DayName $day): string
-    {
-        return match ($day) {
-            DayName::Monday    => 'MO',
-            DayName::Tuesday   => 'TU',
-            DayName::Wednesday => 'WE',
-            DayName::Thursday  => 'TH',
-            DayName::Friday    => 'FR',
-            DayName::Saturday  => 'SA',
-            DayName::Sunday    => 'SU',
-        };
-    }
+    // -------------------------------------------------------------------------
+    // Getters
+    // -------------------------------------------------------------------------
 
     public function getFrequency(): Frequency
     {
         return $this->frequency;
     }
-
     public function getInterval(): int
     {
         return $this->interval;
     }
-
     public function getCount(): ?int
     {
         return $this->count;
     }
-
     public function getUntil(): ?DateTimeImmutable
     {
         return $this->until;
@@ -353,32 +363,17 @@ final class RecurrenceRule
         return $this->byMonth;
     }
 
-    /** Set BYMONTH constraint (month numbers 1–12). */
-    public function onMonths(int ...$months): self
+    /** @return list<int>|null */
+    public function getByMonthDay(): ?array
     {
-        return new self(
-            $this->frequency,
-            $this->interval,
-            $this->count,
-            $this->until,
-            $this->byDay,
-            $this->byNthWeekday,
-            array_values($months),
-            $this->exDates,
-        );
+        return $this->byMonthDay;
     }
 
     // -------------------------------------------------------------------------
     // Internal helpers
     // -------------------------------------------------------------------------
 
-    /**
-     * Generate all candidate dates from the rule's logical start up to $to.
-     * We start from a generous window before $from to handle nth-weekday cases
-     * that may begin outside the requested range.
-     *
-     * @return list<DateTimeImmutable>
-     */
+    /** @return list<DateTimeImmutable> */
     private function generateCandidates(DateTimeImmutable $from, DateTimeImmutable $to): array
     {
         return match ($this->frequency) {
@@ -394,11 +389,10 @@ final class RecurrenceRule
     {
         $results = [];
         $current = $from->setTime(0, 0, 0);
-        $step    = 'P' . $this->interval . 'D';
         $hits    = 0;
 
         while ($current <= $to) {
-            if ($this->matchesByDay($current) && $this->matchesByMonth($current)) {
+            if ($this->matchesByDay($current) && $this->matchesByMonth($current) && $this->matchesByMonthDay($current)) {
                 $results[] = $current;
                 $hits++;
                 if ($this->count !== null && $hits >= $this->count) {
@@ -417,13 +411,10 @@ final class RecurrenceRule
     /** @return list<DateTimeImmutable> */
     private function expandWeekly(DateTimeImmutable $from, DateTimeImmutable $to): array
     {
-        $results = [];
-        // Walk week by week, check each day in the BYDAY list
+        $results    = [];
         $targetDays = $this->byDay !== [] ? $this->byDay : [DayName::fromDate($from)];
-
-        // Start from the Monday of the week containing $from
-        $weekStart = $from->modify('monday this week')->setTime(0, 0, 0);
-        $hits      = 0;
+        $weekStart  = $from->modify('monday this week')->setTime(0, 0, 0);
+        $hits       = 0;
 
         while ($weekStart <= $to) {
             foreach ($targetDays as $dayName) {
@@ -431,7 +422,7 @@ final class RecurrenceRule
                 if ($candidate < $from || $candidate > $to) {
                     continue;
                 }
-                if (!$this->matchesByMonth($candidate)) {
+                if (!$this->matchesByMonth($candidate) || !$this->matchesByMonthDay($candidate)) {
                     continue;
                 }
                 if ($this->until !== null && $candidate > $this->until) {
@@ -457,18 +448,19 @@ final class RecurrenceRule
         $hits      = 0;
 
         while ($monthDate <= $to) {
-            $occurrences = $this->expandMonth($monthDate);
-            foreach ($occurrences as $candidate) {
-                if ($candidate < $from || $candidate > $to) {
-                    continue;
-                }
-                if ($this->until !== null && $candidate > $this->until) {
-                    break 2;
-                }
-                $results[] = $candidate;
-                $hits++;
-                if ($this->count !== null && $hits >= $this->count) {
-                    return $results;
+            if ($this->matchesByMonth($monthDate)) {
+                foreach ($this->expandMonth($monthDate) as $candidate) {
+                    if ($candidate < $from || $candidate > $to) {
+                        continue;
+                    }
+                    if ($this->until !== null && $candidate > $this->until) {
+                        break 2;
+                    }
+                    $results[] = $candidate;
+                    $hits++;
+                    if ($this->count !== null && $hits >= $this->count) {
+                        return $results;
+                    }
                 }
             }
             $monthDate = $monthDate->modify('+' . $this->interval . ' months')->modify('first day of this month');
@@ -477,11 +469,31 @@ final class RecurrenceRule
         return $results;
     }
 
-    /**
-     * @return list<DateTimeImmutable>
-     */
+    /** @return list<DateTimeImmutable> */
     private function expandMonth(DateTimeImmutable $monthStart): array
     {
+        // BYMONTHDAY takes precedence when set — iterate over those specific days
+        if ($this->byMonthDay !== null) {
+            $results  = [];
+            $daysInMonth = (int) $monthStart->format('t');
+            foreach ($this->byMonthDay as $dom) {
+                if ($dom < 1 || $dom > $daysInMonth) {
+                    continue;
+                }
+                $candidate = $monthStart->setDate(
+                    (int) $monthStart->format('Y'),
+                    (int) $monthStart->format('m'),
+                    $dom,
+                )->setTime(0, 0, 0);
+                // Optional further filter by BYDAY
+                if ($this->byDay !== [] && !$this->matchesByDay($candidate)) {
+                    continue;
+                }
+                $results[] = $candidate;
+            }
+            return $results;
+        }
+
         if ($this->byNthWeekday !== null) {
             $results = [];
             foreach ($this->byNthWeekday as $nth => $dayName) {
@@ -506,8 +518,8 @@ final class RecurrenceRule
             return $results;
         }
 
-        // No BYDAY — just the same day-of-month
-        $dom = (int) $monthStart->format('d');
+        // No BYDAY — same day-of-month
+        $dom       = (int) $monthStart->format('d');
         $candidate = $monthStart->setDate(
             (int) $monthStart->format('Y'),
             (int) $monthStart->format('m'),
@@ -552,8 +564,7 @@ final class RecurrenceRule
         if ($this->byDay === []) {
             return true;
         }
-        $dayName = DayName::fromDate($date);
-        return in_array($dayName, $this->byDay, true);
+        return in_array(DayName::fromDate($date), $this->byDay, true);
     }
 
     private function matchesByMonth(DateTimeImmutable $date): bool
@@ -564,15 +575,21 @@ final class RecurrenceRule
         return in_array((int) $date->format('n'), $this->byMonth, true);
     }
 
+    private function matchesByMonthDay(DateTimeImmutable $date): bool
+    {
+        if ($this->byMonthDay === null) {
+            return true;
+        }
+        return in_array((int) $date->format('j'), $this->byMonthDay, true);
+    }
+
     private function nthWeekdayInMonth(DateTimeImmutable $monthStart, int $nth, DayName $dayName): ?DateTimeImmutable
     {
         $dayLower = strtolower($dayName->name);
 
         if ($nth > 0) {
-            // nth occurrence from the start of the month
-            $first = $monthStart->modify("first {$dayLower} of this month");
+            $first  = $monthStart->modify("first {$dayLower} of this month");
             $result = $first->modify('+' . ($nth - 1) . ' weeks');
-            // Ensure the result is still within the same month
             if ($result->format('m') !== $monthStart->format('m')) {
                 return null;
             }
@@ -580,8 +597,7 @@ final class RecurrenceRule
         }
 
         if ($nth < 0) {
-            // nth occurrence from the end of the month
-            $last = $monthStart->modify("last {$dayLower} of this month");
+            $last   = $monthStart->modify("last {$dayLower} of this month");
             $result = $last->modify('+' . ($nth + 1) . ' weeks');
             if ($result->format('m') !== $monthStart->format('m')) {
                 return null;
@@ -592,21 +608,26 @@ final class RecurrenceRule
         return null;
     }
 
-    /**
-     * Parse a BYDAY string into byDay list and byNthWeekday map.
-     *
-     * @return array{list<DayName>, array<int, DayName>|null}
-     */
+    private static function dayToRruleCode(DayName $day): string
+    {
+        return match ($day) {
+            DayName::Monday    => 'MO',
+            DayName::Tuesday   => 'TU',
+            DayName::Wednesday => 'WE',
+            DayName::Thursday  => 'TH',
+            DayName::Friday    => 'FR',
+            DayName::Saturday  => 'SA',
+            DayName::Sunday    => 'SU',
+        };
+    }
+
+    /** @return array{list<DayName>, array<int, DayName>|null} */
     private static function parseByday(string $byday): array
     {
         $dayMap = [
-            'MO' => DayName::Monday,
-            'TU' => DayName::Tuesday,
-            'WE' => DayName::Wednesday,
-            'TH' => DayName::Thursday,
-            'FR' => DayName::Friday,
-            'SA' => DayName::Saturday,
-            'SU' => DayName::Sunday,
+            'MO' => DayName::Monday, 'TU' => DayName::Tuesday,
+            'WE' => DayName::Wednesday, 'TH' => DayName::Thursday,
+            'FR' => DayName::Friday, 'SA' => DayName::Saturday, 'SU' => DayName::Sunday,
         ];
 
         $byDay        = [];
@@ -614,15 +635,13 @@ final class RecurrenceRule
 
         foreach (explode(',', $byday) as $token) {
             $token = trim($token);
-            // Match optional leading integer (nth) followed by 2-char day code
             if (preg_match('/^(-?\d+)([A-Z]{2})$/', $token, $m)) {
-                $nth = (int) $m[1];
                 $code = strtoupper($m[2]);
                 if (!isset($dayMap[$code])) {
                     throw new \InvalidArgumentException("Unknown BYDAY day code: {$code}");
                 }
                 $byNthWeekday ??= [];
-                $byNthWeekday[$nth] = $dayMap[$code];
+                $byNthWeekday[(int) $m[1]] = $dayMap[$code];
             } else {
                 $code = strtoupper($token);
                 if (!isset($dayMap[$code])) {
