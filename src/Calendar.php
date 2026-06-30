@@ -349,9 +349,15 @@ final class Calendar implements CalendarInterface
     // Calendar grid
     // -------------------------------------------------------------------------
 
-    /**
-     * @return Day[][]
-     */
+	/**
+	 * Build the full calendar grid. Triggers DayDataLoaderInterface::load() for the range.
+	 *
+	 * Outer key = ISO week number (1–53).
+	 * Inner key = ISO weekday number (1 = Monday … 7 = Sunday).
+	 * Ghost days (adjacent-month padding) are present in Monthly grids to fill complete week rows.
+	 *
+	 * @return array<int, array<int, Day>>  [weekNum => [isoDayNum => Day]]
+	 */
     public function getDaysTable(): array
     {
         $thisMonthNum  = $this->date->format('m');

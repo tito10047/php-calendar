@@ -102,8 +102,11 @@ final class ICalParser
      */
     private function unfold(string $content): array
     {
-        $content = str_replace(["\r\n ", "\r\n\t"], '', $content);
-        return explode("\r\n", $content) ?: explode("\n", $content);
+		if (!str_contains($content, "\r\n") && str_contains($content, "\n")) {
+			$content = str_replace("\n", "\r\n", $content);
+		}
+		$content = str_replace(["\r\n ", "\r\n\t"], '', $content);
+		return explode("\r\n", $content);
     }
 
     /**
