@@ -40,11 +40,11 @@ class CalendarTypeTest extends TestCase
 
     public function testWorkWeekGetDays(): void
     {
-        // WorkWeek generates Mon–Sun like Weekly; the caller disables Sat/Sun via disableDaysByName.
+        // WorkWeek always generates Mon–Fri (5 days); WeekStart is ignored.
         $days = CalendarType::WorkWeek->getDays(new DateTimeImmutable('2024-11-05'), WeekStart::Monday);
-        $this->assertCount(7, $days);
-        $this->assertSame('2024-11-04', $days[0]->format('Y-m-d'));
-        $this->assertSame('2024-11-10', $days[6]->format('Y-m-d'));
+        $this->assertCount(5, $days);
+        $this->assertSame('2024-11-04', $days[0]->format('Y-m-d'), 'Must start on Monday');
+        $this->assertSame('2024-11-08', $days[4]->format('Y-m-d'), 'Must end on Friday');
     }
 
     public function testMonthlyStartDateIsFirstDayOfGridNotMonth(): void
@@ -67,11 +67,12 @@ class CalendarTypeTest extends TestCase
         $this->assertSame('2024-11-04', $start->format('Y-m-d'));
     }
 
-    public function testWorkWeekEndDateIsSundayOfWeek(): void
+    public function testWorkWeekEndDateIsFriday(): void
     {
-        // WorkWeek end date aligns to Sunday (same as Weekly); Sat/Sun are disabled by the caller.
+        // WorkWeek always ends on Friday regardless of WeekStart.
         $end = CalendarType::WorkWeek->getEndDate(new DateTimeImmutable('2024-11-07'), WeekStart::Monday);
-        $this->assertSame('2024-11-10', $end->format('Y-m-d'));
+        $this->assertSame('2024-11-08', $end->format('Y-m-d'));
+        $this->assertSame('5', $end->format('N'), 'End day must be ISO weekday 5 (Friday)');
     }
 
     public function testAllDaysAreConsecutive(): void
