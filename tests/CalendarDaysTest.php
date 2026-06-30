@@ -9,18 +9,17 @@ use PHPUnit\Framework\TestCase;
 use Tito10047\Calendar\Calendar;
 use Tito10047\Calendar\Day;
 use Tito10047\Calendar\Enum\CalendarType;
-use Tito10047\Calendar\Enum\DayName;
+use Tito10047\Calendar\Enum\WeekStart;
 
 class CalendarDaysTest extends TestCase
 {
     public function testGetWorkWeekDays(): void
     {
+        // WorkWeek natively generates Mon–Fri; no disableDaysByName needed.
         $calendar = new Calendar(
             new DateTimeImmutable('2024-11-04'),
             CalendarType::WorkWeek,
-            DayName::Monday,
         );
-        $calendar = $calendar->disableDaysByName(DayName::Saturday, DayName::Sunday);
         $dayTable = $calendar->getDaysTable();
         $this->assertCount(1, $dayTable);
 
@@ -28,7 +27,7 @@ class CalendarDaysTest extends TestCase
         $this->assertNotNull($weekKey);
         $days = $dayTable[$weekKey];
 
-        $enabledDays = array_filter($days, fn (Day $day) => $day->enabled);
+        $this->assertCount(5, $days);
         $expected = [
             1 => '2024-11-04',
             2 => '2024-11-05',
@@ -36,19 +35,19 @@ class CalendarDaysTest extends TestCase
             4 => '2024-11-07',
             5 => '2024-11-08',
         ];
-        foreach ($enabledDays as $key => $day) {
-            $this->assertEquals($expected[$key], $day->date->format('Y-m-d'));
+        foreach ($days as $isoDay => $day) {
+            $this->assertEquals($expected[$isoDay], $day->date->format('Y-m-d'));
+            $this->assertTrue($day->enabled);
         }
     }
 
     public function testGetWorkWeekDaysStartOfMonth(): void
     {
+        // Nov 1, 2024 is a Friday — WorkWeek snaps back to Monday Oct 28.
         $calendar = new Calendar(
             new DateTimeImmutable('2024-11-01'),
             CalendarType::WorkWeek,
-            DayName::Monday,
         );
-        $calendar = $calendar->disableDaysByName(DayName::Saturday, DayName::Sunday);
         $daysTable = $calendar->getDaysTable();
         $this->assertCount(1, $daysTable);
 
@@ -56,11 +55,7 @@ class CalendarDaysTest extends TestCase
         $this->assertNotNull($weekKey);
         $days = $daysTable[$weekKey];
 
-        $this->assertCount(7, $days);
-
-        $enabledDays = array_filter($days, fn (Day $day) => $day->enabled);
-        $this->assertCount(5, $enabledDays);
-
+        $this->assertCount(5, $days);
         $expected = [
             1 => '2024-10-28',
             2 => '2024-10-29',
@@ -68,8 +63,9 @@ class CalendarDaysTest extends TestCase
             4 => '2024-10-31',
             5 => '2024-11-01',
         ];
-        foreach ($enabledDays as $key => $day) {
-            $this->assertEquals($expected[$key], $day->date->format('Y-m-d'));
+        foreach ($days as $isoDay => $day) {
+            $this->assertEquals($expected[$isoDay], $day->date->format('Y-m-d'));
+            $this->assertTrue($day->enabled);
         }
     }
 
@@ -78,7 +74,7 @@ class CalendarDaysTest extends TestCase
         $calendar = new Calendar(
             new DateTimeImmutable('2024-11-01'),
             CalendarType::Monthly,
-            DayName::Monday,
+            WeekStart::Monday,
         );
         $daysTable = $calendar->getDaysTable();
         $this->assertCount(5, $daysTable);
@@ -101,7 +97,7 @@ class CalendarDaysTest extends TestCase
         $calendar = new Calendar(
             new DateTimeImmutable('2024-11-05'),
             CalendarType::Weekly,
-            DayName::Monday,
+            WeekStart::Monday,
         );
         $daysTable = $calendar->getDaysTable();
         $this->assertCount(1, $daysTable);
@@ -122,7 +118,7 @@ class CalendarDaysTest extends TestCase
         $calendar = new Calendar(
             new DateTimeImmutable('2024-11-05'),
             CalendarType::Weekly,
-            DayName::Monday,
+            WeekStart::Monday,
         );
         foreach (array_merge(...$calendar->getDaysTable()) as $day) {
             $this->assertFalse($day->ghost, "Weekly view should have no ghost days, found one on {$day->date->format('Y-m-d')}");
@@ -135,7 +131,7 @@ class CalendarDaysTest extends TestCase
         $calendar = new Calendar(
             new DateTimeImmutable('2024-11-04'),
             CalendarType::Monthly,
-            DayName::Monday,
+            WeekStart::Monday,
         );
         /** @var Day[] $days */
         $days = array_merge(...$calendar->getDaysTable());

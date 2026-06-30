@@ -1,90 +1,86 @@
 <?php
 
 declare(strict_types=1);
-/**
- * Created by PhpStorm.
- * User: Jozef Môstka
- * Date: 9. 11. 2024
- * Time: 15:50
- */
 
 namespace Tito10047\Calendar\Enum;
 
-use Symfony\Contracts\Translation\TranslatorInterface;
 use Tito10047\Calendar\Interface\DaysGeneratorInterface;
 
+/**
+ * Built-in day-range generators.
+ *
+ * Monthly  — full month padded to complete weeks (ghost days at both ends).
+ * Weekly   — 7-day week starting on the configured WeekStart day.
+ * WorkWeek — 5-day Mon–Fri week; WeekStart is ignored (always Monday-anchored).
+ *            Use this when Saturday and Sunday must never appear in the grid.
+ */
 enum CalendarType implements DaysGeneratorInterface
 {
+    /** Full calendar month, padded to complete weeks. Ghost days mark adjacent-month padding. */
     case Monthly;
+    /** 7-day week starting on the configured WeekStart day. */
     case Weekly;
+    /** 5-day Mon–Fri week. WeekStart is ignored; the grid always runs Monday → Friday. */
     case WorkWeek;
 
-    public function getDayName(
-        \DateTimeImmutable $date,
-        ?TranslatorInterface $translator = null,
-        ?string $translationDomain = null
-    ): string {
-        $dayName = $date->format('D');
-        $monthName = $date->format('M');
-        if ($translator) {
-            $dayName = $translator->trans($dayName, [], $translationDomain);
-            $monthName = $translator->trans($monthName, [], $translationDomain);
-        }
-        $dayNum = $date->format('j');
+    public function hasGhostDays(): bool
+    {
+        return $this === self::Monthly;
+    }
+
+    public function getNavigationStep(): \DateInterval
+    {
         return match ($this) {
-            self::Monthly => $dayNum,
-            self::Weekly,self::WorkWeek => "{$dayName} {$dayNum} {$monthName}",
+            self::Monthly                => new \DateInterval('P1M'),
+            self::Weekly, self::WorkWeek => new \DateInterval('P7D'),
         };
     }
 
     /**
      * @return list<\DateTimeImmutable>
      */
-    public function getDays(\DateTimeImmutable $day, DayName $firstDay): array
+    public function getDays(\DateTimeImmutable $day, WeekStart $weekStart): array
     {
-        $days = [];
-        $currentDay = $this->getStartDate($day, $firstDay);
-        $lastDayDate = $this->getEndDate($day, $firstDay);
-        while ($currentDay <= $lastDayDate) {
-            $days[] = $currentDay;
+        $days       = [];
+        $currentDay = $this->getStartDate($day, $weekStart);
+        $lastDay    = $this->getEndDate($day, $weekStart);
+        while ($currentDay <= $lastDay) {
+            $days[]     = $currentDay;
             $currentDay = $currentDay->modify('+1 day');
         }
         return $days;
     }
-    public function getStartDate(\DateTimeImmutable $day, DayName $firstDay): \DateTimeImmutable
-    {
 
-        $firstDayDate = $day->modify(match ($this) {
-            self::Monthly => 'first day of this month',
-            self::Weekly => 'monday this week',
-            self::WorkWeek => 'monday this week',
-        });
-        $firstDayDate = $firstDayDate->modify("monday this week");
-        if ($this !== CalendarType::Monthly) {
-            if ($firstDay == DayName::Sunday) {
-                $firstDayDate = $firstDayDate->modify("-7 day");
-            }
-            $dayNumber = $firstDay->getDayNumber() - 1;
-            $firstDayDate = $firstDayDate->modify("+{$dayNumber} days");
-        }
-        return $firstDayDate;
+    public function getStartDate(\DateTimeImmutable $day, WeekStart $weekStart): \DateTimeImmutable
+    {
+        $anchor = match ($this) {
+            self::Monthly  => $day->modify('first day of this month'),
+            self::Weekly   => $day,
+            self::WorkWeek => $day, // always snaps to Monday below
+        };
+        $anchor    = $anchor->setTime(0, 0, 0);
+        $dayOfWeek = (int) $anchor->format('N');
+        // WorkWeek always starts on Monday (ISO 1), regardless of $weekStart
+        $startValue = $this === self::WorkWeek ? 1 : $weekStart->value;
+        $daysBack   = ($dayOfWeek - $startValue + 7) % 7;
+        return $anchor->modify("-{$daysBack} days");
     }
-    public function getEndDate(\DateTimeImmutable $day, DayName $firstDay): \DateTimeImmutable
-    {
 
-        $lastDayDate = $day->modify(match ($this) {
-            self::Monthly => 'last day of this month',
-            self::Weekly => 'sunday this week',
-            self::WorkWeek => 'friday this week',
-        });
-        $lastDayDate = $lastDayDate->modify("sunday this week");
-        if ($this !== CalendarType::Monthly) {
-            if ($firstDay == DayName::Sunday) {
-                $lastDayDate = $lastDayDate->modify("-7 day");
-            }
-            $dayNumber = $firstDay->getDayNumber() - 1;
-            $lastDayDate = $lastDayDate->modify("+{$dayNumber} days");
-        }
-        return $lastDayDate;
+    public function getEndDate(\DateTimeImmutable $day, WeekStart $weekStart): \DateTimeImmutable
+    {
+        return match ($this) {
+            self::Monthly  => $this->monthlyEndDate($day, $weekStart),
+            self::Weekly   => $this->getStartDate($day, $weekStart)->modify('+6 days'),
+            self::WorkWeek => $this->getStartDate($day, $weekStart)->modify('+4 days'), // Monday + 4 = Friday
+        };
+    }
+
+    private function monthlyEndDate(\DateTimeImmutable $day, WeekStart $weekStart): \DateTimeImmutable
+    {
+        $lastOfMonth   = $day->modify('last day of this month')->setTime(0, 0, 0);
+        $dayOfWeek     = (int) $lastOfMonth->format('N');
+        $lastDayOfWeek = $weekStart->lastDayIsoNumber();
+        $daysForward   = ($lastDayOfWeek - $dayOfWeek + 7) % 7;
+        return $lastOfMonth->modify("+{$daysForward} days");
     }
 }

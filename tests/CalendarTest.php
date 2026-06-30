@@ -10,6 +10,7 @@ use PHPUnit\Framework\TestCase;
 use Tito10047\Calendar\Calendar;
 use Tito10047\Calendar\Enum\CalendarType;
 use Tito10047\Calendar\Enum\DayName;
+use Tito10047\Calendar\Enum\WeekStart;
 use Tito10047\Calendar\Interface\DayDataLoaderInterface;
 
 class CalendarTest extends TestCase
@@ -19,7 +20,7 @@ class CalendarTest extends TestCase
         $calendar = new Calendar(
             new DateTimeImmutable('2024-11-04'),
             CalendarType::WorkWeek,
-            DayName::Monday,
+            WeekStart::Monday,
         );
         $this->assertFalse($calendar->isFirstDay(new DateTimeImmutable('2024-10-01')));
         $this->assertTrue($calendar->isFirstDay(new DateTimeImmutable('2024-11-01')));
@@ -33,7 +34,7 @@ class CalendarTest extends TestCase
         $calendar = new Calendar(
             new DateTimeImmutable('2024-11-04'),
             CalendarType::WorkWeek,
-            DayName::Monday,
+            WeekStart::Monday,
         );
         $this->assertFalse($calendar->isLastDay(new DateTimeImmutable('2024-11-01')));
         $this->assertFalse($calendar->isLastDay(new DateTimeImmutable('2024-11-02')));
@@ -125,32 +126,33 @@ class CalendarTest extends TestCase
         $this->assertTrue($disabled->isDayDisabled(new DateTimeImmutable('2024-11-11')));
     }
 
-    public function testNextMonth(): void
+    public function testNextPeriodForMonthly(): void
     {
         $november = new Calendar(new DateTimeImmutable('2024-11-01'), CalendarType::Monthly);
         $november = $november->disableDays(new DateTimeImmutable('2024-11-15'));
 
-        $december = $november->nextMonth();
+        $december = $november->nextPeriod();
 
         $this->assertSame('2024-12', $december->getDate()->format('Y-m'));
-        $this->assertCount(0, $december->getDisabledDays(), 'nextMonth() must clear disabled days');
+        $this->assertCount(0, $december->getDisabledDays(), 'nextPeriod() must clear disabled days');
     }
 
-    public function testPrevMonth(): void
+    public function testPrevPeriodForMonthly(): void
     {
         $november = new Calendar(new DateTimeImmutable('2024-11-01'), CalendarType::Monthly);
         $november = $november->disableDays(new DateTimeImmutable('2024-11-15'));
 
-        $october = $november->prevMonth();
+        $october = $november->prevPeriod();
 
         $this->assertSame('2024-10', $october->getDate()->format('Y-m'));
-        $this->assertCount(0, $october->getDisabledDays(), 'prevMonth() must clear disabled days');
+        $this->assertCount(0, $october->getDisabledDays(), 'prevPeriod() must clear disabled days');
     }
 
     public function testDataLoaderPopulatesDayData(): void
     {
         /** @var DayDataLoaderInterface&Stub $loader */
         $loader = $this->createStub(DayDataLoaderInterface::class);
+        $loader->method('load')->willReturnSelf();
         $loader->method('getData')->willReturnCallback(
             fn (DateTimeImmutable $date) => ['label' => $date->format('Y-m-d')]
         );
@@ -204,7 +206,7 @@ class CalendarTest extends TestCase
         $calendar = new Calendar(
             new DateTimeImmutable('2024-11-04'),
             CalendarType::WorkWeek,
-            DayName::Monday,
+            WeekStart::Monday,
         );
         $this->assertFalse($calendar->isFirstDay(new DateTimeImmutable('2024-10-01')));
         $this->assertTrue($calendar->isFirstDay(new DateTimeImmutable('2024-11-01')));
@@ -218,7 +220,7 @@ class CalendarTest extends TestCase
         $calendar = new Calendar(
             new DateTimeImmutable('2024-11-04'),
             CalendarType::WorkWeek,
-            DayName::Monday,
+            WeekStart::Monday,
         );
         $this->assertFalse($calendar->isLastDay(new DateTimeImmutable('2024-11-01')));
         $this->assertFalse($calendar->isLastDay(new DateTimeImmutable('2024-11-02')));

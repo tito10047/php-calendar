@@ -5,15 +5,4 @@ parameters:
         - tests
     excludePaths:
         - vendor
-        - src/Renderer
-        - src/Renderer.php
-        - src/Translator.php
-        - src/Event.php
-        - src/Interface/MonthRendererInterface.php
-        - src/Interface/WeekRowRendererInterface.php
-        - src/Interface/DayRendererInterface.php
-        - src/Interface/DayNameRendererInterface.php
-        - src/Interface/EventRendererInterface.php
-        - src/Interface/EventInterface.php
-        - tests/CalendarRenderTest.php
     treatPhpDocTypesAsCertain: false
