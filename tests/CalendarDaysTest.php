@@ -9,7 +9,6 @@ use PHPUnit\Framework\TestCase;
 use Tito10047\Calendar\Calendar;
 use Tito10047\Calendar\Day;
 use Tito10047\Calendar\Enum\CalendarType;
-use Tito10047\Calendar\Enum\DayName;
 use Tito10047\Calendar\Enum\WeekStart;
 
 class CalendarDaysTest extends TestCase
