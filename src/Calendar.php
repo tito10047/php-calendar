@@ -64,6 +64,33 @@ final class Calendar implements CalendarInterface
         );
     }
 
+    /**
+     * Reconstruct a Calendar from a serialisable CalendarConfig.
+     * Pass pre-loaded day data as a flat array keyed by 'Y-m-d'.
+     *
+     * @param array<string, array<mixed>> $data Per-day data keyed by 'Y-m-d'
+     */
+    public static function fromConfig(CalendarConfig $config, array $data = []): self
+    {
+        $disabledDays = [];
+        foreach ($config->getDisabledDayKeys() as $key) {
+            $disabledDays[$key] = new DateTimeImmutable($key);
+        }
+
+        $calendar = new self(
+            date: $config->date,
+            daysGenerator: $config->type,
+            startDay: $config->startDay,
+            disabledDays: $disabledDays,
+        );
+
+        if ($data !== []) {
+            $calendar = $calendar->setDataLoader(new \Tito10047\Calendar\DataLoader\ArrayDataLoader($data));
+        }
+
+        return $calendar;
+    }
+
     // -------------------------------------------------------------------------
     // Accessors
     // -------------------------------------------------------------------------
