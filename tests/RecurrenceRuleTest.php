@@ -12,11 +12,8 @@ use Tito10047\Calendar\Recurrence\RecurrenceRule;
 
 class RecurrenceRuleTest extends TestCase
 {
-    private function dates(string ...$dates): array
-    {
-        return array_map(fn (string $d) => new DateTimeImmutable($d), $dates);
-    }
-
+    /** @param list<DateTimeImmutable> $dates
+     *  @return list<string> */
     private function format(array $dates): array
     {
         return array_map(fn (DateTimeImmutable $d) => $d->format('Y-m-d'), $dates);

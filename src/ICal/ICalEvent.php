@@ -23,7 +23,8 @@ final class ICalEvent
         public readonly ?RecurrenceRule $rrule,
         /** @var list<DateTimeImmutable> */
         public readonly array $exDates = [],
-    ) {}
+    ) {
+    }
 
     /**
      * Whether this event repeats.

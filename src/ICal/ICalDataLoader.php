@@ -24,7 +24,9 @@ final class ICalDataLoader implements DayDataLoaderInterface
     private array $byDate = [];
 
     /** @param list<ICalEvent> $events */
-    private function __construct(private readonly array $events) {}
+    private function __construct(private readonly array $events)
+    {
+    }
 
     /** @param list<ICalEvent> $events */
     public static function fromEvents(array $events): self

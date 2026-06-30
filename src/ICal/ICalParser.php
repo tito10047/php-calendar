@@ -109,6 +109,7 @@ final class ICalParser
     /**
      * Parse VTIMEZONE blocks and build a tzid → DateTimeZone map.
      *
+     * @param  array<string>           $lines
      * @return array<string, DateTimeZone>
      */
     private function parseTzMap(array $lines): array

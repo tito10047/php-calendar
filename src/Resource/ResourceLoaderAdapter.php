@@ -18,7 +18,8 @@ final class ResourceLoaderAdapter implements DayDataLoaderInterface
     public function __construct(
         private readonly ResourceDataLoaderInterface $loader,
         private readonly ResourceInterface $resource,
-    ) {}
+    ) {
+    }
 
     public function load(DateTimeImmutable $from, DateTimeImmutable $to): void
     {

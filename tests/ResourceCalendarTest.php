@@ -17,11 +17,12 @@ class ResourceCalendarTest extends TestCase
 {
     private function makeResource(string $id, string $name): ResourceInterface
     {
-        return new class($id, $name) implements ResourceInterface {
+        return new class ($id, $name) implements ResourceInterface {
             public function __construct(
                 private readonly string $id,
                 private readonly string $name,
-            ) {}
+            ) {
+            }
 
             public function getResourceId(): string
             {
@@ -35,12 +36,18 @@ class ResourceCalendarTest extends TestCase
         };
     }
 
+    /** @param array<string, array<string, array<mixed>>> $dataMap */
     private function makeLoader(array $dataMap = []): ResourceDataLoaderInterface
     {
-        return new class($dataMap) implements ResourceDataLoaderInterface {
-            public function __construct(private array $dataMap) {}
+        return new class ($dataMap) implements ResourceDataLoaderInterface {
+            /** @param array<string, array<string, array<mixed>>> $dataMap */
+            public function __construct(private array $dataMap)
+            {
+            }
 
-            public function load(ResourceInterface $resource, DateTimeImmutable $from, DateTimeImmutable $to): void {}
+            public function load(ResourceInterface $resource, DateTimeImmutable $from, DateTimeImmutable $to): void
+            {
+            }
 
             public function getData(ResourceInterface $resource, DateTimeImmutable $date): array
             {
@@ -129,8 +136,10 @@ class ResourceCalendarTest extends TestCase
     {
         $loadCount = 0;
 
-        $loader = new class($loadCount) implements ResourceDataLoaderInterface {
-            public function __construct(public int &$loadCount) {}
+        $loader = new class ($loadCount) implements ResourceDataLoaderInterface {
+            public function __construct(public int &$loadCount)
+            {
+            }
 
             public function load(ResourceInterface $resource, DateTimeImmutable $from, DateTimeImmutable $to): void
             {

@@ -139,8 +139,14 @@ final class RecurrenceRule
     public function onDays(DayName ...$days): self
     {
         return new self(
-            $this->frequency, $this->interval, $this->count, $this->until,
-            array_values($days), null, $this->byMonth, $this->exDates,
+            $this->frequency,
+            $this->interval,
+            $this->count,
+            $this->until,
+            array_values($days),
+            null,
+            $this->byMonth,
+            $this->exDates,
         );
     }
 
@@ -148,32 +154,56 @@ final class RecurrenceRule
     public function onNthWeekday(int $nth, DayName $day): self
     {
         return new self(
-            $this->frequency, $this->interval, $this->count, $this->until,
-            [], [$nth => $day], $this->byMonth, $this->exDates,
+            $this->frequency,
+            $this->interval,
+            $this->count,
+            $this->until,
+            [],
+            [$nth => $day],
+            $this->byMonth,
+            $this->exDates,
         );
     }
 
     public function every(int $interval): self
     {
         return new self(
-            $this->frequency, $interval, $this->count, $this->until,
-            $this->byDay, $this->byNthWeekday, $this->byMonth, $this->exDates,
+            $this->frequency,
+            $interval,
+            $this->count,
+            $this->until,
+            $this->byDay,
+            $this->byNthWeekday,
+            $this->byMonth,
+            $this->exDates,
         );
     }
 
     public function count(int $count): self
     {
         return new self(
-            $this->frequency, $this->interval, $count, null,
-            $this->byDay, $this->byNthWeekday, $this->byMonth, $this->exDates,
+            $this->frequency,
+            $this->interval,
+            $count,
+            null,
+            $this->byDay,
+            $this->byNthWeekday,
+            $this->byMonth,
+            $this->exDates,
         );
     }
 
     public function until(DateTimeImmutable $until): self
     {
         return new self(
-            $this->frequency, $this->interval, null, $until->setTime(23, 59, 59),
-            $this->byDay, $this->byNthWeekday, $this->byMonth, $this->exDates,
+            $this->frequency,
+            $this->interval,
+            null,
+            $until->setTime(23, 59, 59),
+            $this->byDay,
+            $this->byNthWeekday,
+            $this->byMonth,
+            $this->exDates,
         );
     }
 
@@ -185,8 +215,14 @@ final class RecurrenceRule
             $exDates[] = $d->format('Y-m-d');
         }
         return new self(
-            $this->frequency, $this->interval, $this->count, $this->until,
-            $this->byDay, $this->byNthWeekday, $this->byMonth, array_unique($exDates),
+            $this->frequency,
+            $this->interval,
+            $this->count,
+            $this->until,
+            $this->byDay,
+            $this->byNthWeekday,
+            $this->byMonth,
+            array_values(array_unique($exDates)),
         );
     }
 

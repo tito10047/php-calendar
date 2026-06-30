@@ -31,7 +31,8 @@ final class ResourceCalendar
         private readonly Calendar $calendar,
         private readonly array $resources,
         private readonly ResourceDataLoaderInterface $loader,
-    ) {}
+    ) {
+    }
 
     /** @return ResourceInterface[] */
     public function getResources(): array

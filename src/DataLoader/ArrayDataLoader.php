@@ -19,7 +19,9 @@ final class ArrayDataLoader implements DayDataLoaderInterface
     /**
      * @param array<string, array<mixed>> $data Keys must be 'Y-m-d' strings.
      */
-    public function __construct(private readonly array $data) {}
+    public function __construct(private readonly array $data)
+    {
+    }
 
     public function load(DateTimeImmutable $from, DateTimeImmutable $to): void
     {

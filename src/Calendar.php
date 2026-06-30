@@ -95,7 +95,7 @@ final class Calendar implements CalendarInterface
             daysGenerator: $config->type,
             startDay: $config->startDay,
             disabledDays: $disabledDays,
-            disabledDayNames: $config->disabledDayNames,
+            disabledDayNames: array_values($config->disabledDayNames),
             enabledDays: $enabledDays,
         );
 

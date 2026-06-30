@@ -92,7 +92,7 @@ class CalendarTypeTest extends TestCase
         // daysForward = (6 - 6 + 7) % 7 = 0 → grid ends on Sat 30 Nov. 5 weeks = 35 days.
         $days = CalendarType::Monthly->getDays(new DateTimeImmutable('2024-11-01'), WeekStart::Sunday);
         $this->assertSame('2024-10-27', $days[0]->format('Y-m-d'), 'Grid must start on Sunday 27 Oct');
-        $this->assertSame('2024-11-30', $days[array_key_last($days)]->format('Y-m-d'), 'Grid must end on Saturday 30 Nov');
+        $this->assertSame('2024-11-30', $days[count($days) - 1]->format('Y-m-d'), 'Grid must end on Saturday 30 Nov');
         $this->assertCount(35, $days);
     }
 
@@ -113,7 +113,7 @@ class CalendarTypeTest extends TestCase
         // daysForward = (5-6+7)%7 = 6 → grid end = Sat 30 Nov + 6 = Fri 6 Dec. 6 weeks = 42 days.
         $days = CalendarType::Monthly->getDays(new DateTimeImmutable('2024-11-01'), WeekStart::Saturday);
         $this->assertSame('2024-10-26', $days[0]->format('Y-m-d'), 'Grid must start on Saturday 26 Oct');
-        $this->assertSame('2024-12-06', $days[array_key_last($days)]->format('Y-m-d'), 'Grid must end on Friday 6 Dec');
+        $this->assertSame('2024-12-06', $days[count($days) - 1]->format('Y-m-d'), 'Grid must end on Friday 6 Dec');
         $this->assertCount(42, $days);
     }
 }
