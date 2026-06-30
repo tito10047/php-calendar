@@ -63,20 +63,6 @@ interface CalendarInterface
     public function withDate(DateTimeImmutable $date): self;
 
     /**
-     * Clone current calendar with new date of the next month. It will return new instance of the calendar.
-     * Disabled days will be cleared.
-     * @return self
-     */
-    public function nextMonth(): self;
-
-    /**
-     * Clone current calendar with new date of the previous month. It will return new instance of the calendar.
-     * Disabled days will be cleared.
-     * @return self
-     */
-    public function prevMonth(): self;
-
-    /**
      * Advance by one period as defined by the generator (month for Monthly, week for Weekly/WorkWeek).
      * Disabled days are cleared; all other settings are preserved.
      */

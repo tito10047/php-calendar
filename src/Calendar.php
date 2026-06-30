@@ -212,30 +212,6 @@ final class Calendar implements CalendarInterface
     }
 
 
-    public function nextMonth(): self
-    {
-        $date = $this->date->modify('+1 month')->modify('first day of this month');
-        return new self(
-            date: $date,
-            daysGenerator: $this->daysGenerator,
-            startDay: $this->startDay,
-            disabledDays: [],
-            dataLoader: $this->dataLoader,
-        );
-    }
-
-    public function prevMonth(): self
-    {
-        $date = $this->date->modify('-1 month')->modify('first day of this month');
-        return new self(
-            date: $date,
-            daysGenerator: $this->daysGenerator,
-            startDay: $this->startDay,
-            disabledDays: [],
-            dataLoader: $this->dataLoader,
-        );
-    }
-
     public function nextPeriod(): self
     {
         $date = $this->date->add($this->daysGenerator->getNavigationStep());
