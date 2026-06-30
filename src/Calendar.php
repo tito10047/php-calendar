@@ -145,6 +145,7 @@ final class Calendar implements CalendarInterface
     public function getDaysTable(): array
     {
         $thisMonthNum = $this->date->format('m');
+        $ghostsEnabled = $this->daysGenerator->hasGhostDays();
         $days = $this->days;
         $today = date('Y-m-d');
         $rows = [];
@@ -159,7 +160,7 @@ final class Calendar implements CalendarInterface
                 $day = array_shift($days);
                 $dayElm = new Day(
                     date: $day,
-                    ghost: $day->format('m') !== $thisMonthNum,
+                    ghost: $ghostsEnabled && $day->format('m') !== $thisMonthNum,
                     today: $day->format('Y-m-d') === $today,
                     enabled: !array_key_exists($day->format('Y-m-d'), $this->disabledDays),
                 );

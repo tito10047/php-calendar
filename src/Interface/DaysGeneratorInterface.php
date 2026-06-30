@@ -18,4 +18,10 @@ interface DaysGeneratorInterface
      * @return list<\DateTimeImmutable>
      */
     public function getDays(\DateTimeImmutable $day, DayName $firstDay): array;
+
+    /**
+     * Whether days outside the primary period (e.g. adjacent-month padding) should be flagged as ghost.
+     * Return false for week-based generators where every day in the range is a first-class cell.
+     */
+    public function hasGhostDays(): bool;
 }

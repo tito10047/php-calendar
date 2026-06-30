@@ -1,16 +1,9 @@
 <?php
 
 declare(strict_types=1);
-/**
- * Created by PhpStorm.
- * User: Jozef Môstka
- * Date: 9. 11. 2024
- * Time: 15:50
- */
 
 namespace Tito10047\Calendar\Enum;
 
-use Symfony\Contracts\Translation\TranslatorInterface;
 use Tito10047\Calendar\Interface\DaysGeneratorInterface;
 
 enum CalendarType implements DaysGeneratorInterface
@@ -19,22 +12,9 @@ enum CalendarType implements DaysGeneratorInterface
     case Weekly;
     case WorkWeek;
 
-    public function getDayName(
-        \DateTimeImmutable $date,
-        ?TranslatorInterface $translator = null,
-        ?string $translationDomain = null
-    ): string {
-        $dayName = $date->format('D');
-        $monthName = $date->format('M');
-        if ($translator) {
-            $dayName = $translator->trans($dayName, [], $translationDomain);
-            $monthName = $translator->trans($monthName, [], $translationDomain);
-        }
-        $dayNum = $date->format('j');
-        return match ($this) {
-            self::Monthly => $dayNum,
-            self::Weekly,self::WorkWeek => "{$dayName} {$dayNum} {$monthName}",
-        };
+    public function hasGhostDays(): bool
+    {
+        return $this === self::Monthly;
     }
 
     /**
