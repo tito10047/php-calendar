@@ -96,7 +96,7 @@ final class RecurrenceRule
      */
     public static function fromRrule(string $rrule): self
     {
-        $rrule = ltrim($rrule, 'RRULE:');
+        $rrule = str_starts_with($rrule, 'RRULE:') ? substr($rrule, 6) : $rrule;
         $parts = [];
         foreach (explode(';', $rrule) as $part) {
             [$key, $value] = explode('=', $part, 2) + ['', ''];

@@ -37,6 +37,28 @@ class RecurrenceRuleTest extends TestCase
         $this->assertSame([DayName::Monday, DayName::Wednesday, DayName::Friday], $rule->getByDay());
     }
 
+    public function testFromRruleStripsRrulePrefixAsString(): void
+    {
+        // ltrim() would strip individual chars from {R,U,L,E,:} — so a bare rule starting
+        // with 'U' (e.g. UNTIL=...) would silently lose its first character.
+        // str_starts_with() fixes this: only the exact prefix "RRULE:" is removed.
+        $withPrefix    = RecurrenceRule::fromRrule('RRULE:FREQ=DAILY;COUNT=3');
+        $withoutPrefix = RecurrenceRule::fromRrule('FREQ=DAILY;COUNT=3');
+
+        $this->assertSame(Frequency::Daily, $withPrefix->getFrequency());
+        $this->assertSame(3, $withPrefix->getCount());
+        $this->assertSame($withPrefix->getFrequency(), $withoutPrefix->getFrequency());
+        $this->assertSame($withPrefix->getCount(), $withoutPrefix->getCount());
+    }
+
+    public function testFromRruleDoesNotStripLeadingCharsWithoutPrefix(): void
+    {
+        // A rule starting with 'U' must not be mutilated when no "RRULE:" prefix is present.
+        $rule = RecurrenceRule::fromRrule('FREQ=WEEKLY;UNTIL=20241231T235959Z');
+        $this->assertNotNull($rule->getUntil(), 'UNTIL must be parsed when rule has no RRULE: prefix');
+        $this->assertSame('2024-12-31', $rule->getUntil()?->format('Y-m-d'));
+    }
+
     public function testFromRruleParsesInterval(): void
     {
         $rule = RecurrenceRule::fromRrule('FREQ=DAILY;INTERVAL=2');
