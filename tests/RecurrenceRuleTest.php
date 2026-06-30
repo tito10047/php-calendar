@@ -262,4 +262,93 @@ class RecurrenceRuleTest extends TestCase
         $this->expectException(\InvalidArgumentException::class);
         RecurrenceRule::daily()->limitTo(-1);
     }
+
+    // -------------------------------------------------------------------------
+    // BYMONTHDAY — negative values (RFC 5545 §3.3.10: -31 to -1 allowed)
+    // -------------------------------------------------------------------------
+
+    public function testByMonthdayNegativeLastDayOfMonth(): void
+    {
+        // -1 = last day; Feb 2024 = 29 (leap year), Jan/Mar = 31
+        $rule   = RecurrenceRule::fromRrule('FREQ=MONTHLY;BYMONTHDAY=-1');
+        $from   = new DateTimeImmutable('2024-01-01');
+        $to     = new DateTimeImmutable('2024-03-31');
+        $result = $this->format($rule->expand($from, $to));
+
+        $this->assertSame(['2024-01-31', '2024-02-29', '2024-03-31'], $result);
+    }
+
+    public function testByMonthdayNegativeThirdFromEnd(): void
+    {
+        // -3 in a 30-day month: 30 - 3 + 1 = 28
+        $rule   = RecurrenceRule::fromRrule('FREQ=MONTHLY;BYMONTHDAY=-3');
+        $from   = new DateTimeImmutable('2024-11-01');
+        $to     = new DateTimeImmutable('2024-11-30');
+        $result = $this->format($rule->expand($from, $to));
+
+        $this->assertSame(['2024-11-28'], $result);
+    }
+
+    public function testByMonthdayNegativeViaBuilder(): void
+    {
+        // Builder path: monthly()->onMonthDays(-1)
+        $rule   = RecurrenceRule::monthly()->onMonthDays(-1);
+        $from   = new DateTimeImmutable('2024-02-01');
+        $to     = new DateTimeImmutable('2024-02-29');
+        $result = $this->format($rule->expand($from, $to));
+
+        $this->assertSame(['2024-02-29'], $result);
+    }
+
+    public function testByMonthdayNegativeDailyFilter(): void
+    {
+        // FREQ=DAILY;BYMONTHDAY=-1 = only the last day of each month
+        $rule   = RecurrenceRule::fromRrule('FREQ=DAILY;BYMONTHDAY=-1');
+        $from   = new DateTimeImmutable('2024-01-01');
+        $to     = new DateTimeImmutable('2024-03-31');
+        $result = $this->format($rule->expand($from, $to));
+
+        $this->assertSame(['2024-01-31', '2024-02-29', '2024-03-31'], $result);
+    }
+
+    // -------------------------------------------------------------------------
+    // BYMONTHDAY — validation
+    // -------------------------------------------------------------------------
+
+    public function testByMonthdayWithWeeklyFromRruleThrows(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+        RecurrenceRule::fromRrule('FREQ=WEEKLY;BYMONTHDAY=1');
+    }
+
+    public function testOnMonthDaysWithWeeklyThrows(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+        RecurrenceRule::weekly()->onMonthDays(1);
+    }
+
+    public function testOnMonthDaysThrowsOnZero(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+        RecurrenceRule::monthly()->onMonthDays(0);
+    }
+
+    public function testOnMonthDaysThrowsOutOfRange(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+        RecurrenceRule::monthly()->onMonthDays(32);
+    }
+
+    public function testOnMonthDaysThrowsOnNegativeOutOfRange(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+        RecurrenceRule::monthly()->onMonthDays(-32);
+    }
+
+    public function testByMonthdayRoundTrip(): void
+    {
+        $original = 'FREQ=MONTHLY;BYMONTHDAY=-1,15';
+        $rule     = RecurrenceRule::fromRrule($original);
+        $this->assertSame($original, $rule->toRruleString());
+    }
 }

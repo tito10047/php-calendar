@@ -115,6 +115,14 @@ final class RecurrenceRule
         $byMonthDay = null;
         if (isset($parts['BYMONTHDAY'])) {
             $byMonthDay = array_map('intval', explode(',', $parts['BYMONTHDAY']));
+            if ($frequency === Frequency::Weekly) {
+                throw new \InvalidArgumentException('BYMONTHDAY MUST NOT be used with FREQ=WEEKLY (RFC 5545 §3.3.10)');
+            }
+            foreach ($byMonthDay as $dom) {
+                if ($dom === 0 || $dom < -31 || $dom > 31) {
+                    throw new \InvalidArgumentException("BYMONTHDAY value must be 1–31 or -31–-1, got {$dom}");
+                }
+            }
         }
 
         return new self($frequency, $interval, $count, $until, $byDay, $byNthWeekday, $byMonth, $byMonthDay, []);
@@ -237,9 +245,17 @@ final class RecurrenceRule
         );
     }
 
-    /** Set BYMONTHDAY constraint (day-of-month numbers 1–31). */
+    /** Set BYMONTHDAY constraint (1–31 or -31–-1; negative counts from end of month). */
     public function onMonthDays(int ...$days): self
     {
+        if ($this->frequency === Frequency::Weekly) {
+            throw new \InvalidArgumentException('BYMONTHDAY MUST NOT be used with FREQ=WEEKLY (RFC 5545 §3.3.10)');
+        }
+        foreach ($days as $dom) {
+            if ($dom === 0 || $dom < -31 || $dom > 31) {
+                throw new \InvalidArgumentException("BYMONTHDAY value must be 1–31 or -31–-1, got {$dom}");
+            }
+        }
         return new self(
             $this->frequency,
             $this->interval,
@@ -474,18 +490,19 @@ final class RecurrenceRule
     {
         // BYMONTHDAY takes precedence when set — iterate over those specific days
         if ($this->byMonthDay !== null) {
-            $results  = [];
+            $results     = [];
             $daysInMonth = (int) $monthStart->format('t');
             foreach ($this->byMonthDay as $dom) {
-                if ($dom < 1 || $dom > $daysInMonth) {
+                // Resolve negative values: -1 = last day, -2 = second-to-last, etc.
+                $resolved = $dom >= 0 ? $dom : $daysInMonth + $dom + 1;
+                if ($resolved < 1 || $resolved > $daysInMonth) {
                     continue;
                 }
                 $candidate = $monthStart->setDate(
                     (int) $monthStart->format('Y'),
                     (int) $monthStart->format('m'),
-                    $dom,
+                    $resolved,
                 )->setTime(0, 0, 0);
-                // Optional further filter by BYDAY
                 if ($this->byDay !== [] && !$this->matchesByDay($candidate)) {
                     continue;
                 }
@@ -580,7 +597,15 @@ final class RecurrenceRule
         if ($this->byMonthDay === null) {
             return true;
         }
-        return in_array((int) $date->format('j'), $this->byMonthDay, true);
+        $dayOfMonth  = (int) $date->format('j');
+        $daysInMonth = (int) $date->format('t');
+        foreach ($this->byMonthDay as $dom) {
+            $resolved = $dom >= 0 ? $dom : $daysInMonth + $dom + 1;
+            if ($resolved === $dayOfMonth) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private function nthWeekdayInMonth(DateTimeImmutable $monthStart, int $nth, DayName $dayName): ?DateTimeImmutable
