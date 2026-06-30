@@ -1,23 +1,17 @@
 <?php
 
 declare(strict_types=1);
-/**
- * Created by PhpStorm.
- * User: Jozef Môstka
- * Date: 10. 11. 2024
- * Time: 8:10
- */
 
 namespace Tito10047\Calendar\Interface;
 
-use Tito10047\Calendar\Enum\DayName;
+use Tito10047\Calendar\Enum\WeekStart;
 
 interface DaysGeneratorInterface
 {
     /**
      * @return list<\DateTimeImmutable>
      */
-    public function getDays(\DateTimeImmutable $day, DayName $firstDay): array;
+    public function getDays(\DateTimeImmutable $day, WeekStart $weekStart): array;
 
     /**
      * Whether days outside the primary period (e.g. adjacent-month padding) should be flagged as ghost.

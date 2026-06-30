@@ -9,6 +9,7 @@ use PHPUnit\Framework\TestCase;
 use Tito10047\Calendar\Calendar;
 use Tito10047\Calendar\Enum\CalendarType;
 use Tito10047\Calendar\Enum\DayName;
+use Tito10047\Calendar\Enum\WeekStart;
 
 class CalendarApiExtensionsTest extends TestCase
 {
@@ -24,8 +25,8 @@ class CalendarApiExtensionsTest extends TestCase
 
     public function testForMonthWithCustomStartDay(): void
     {
-        $calendar = Calendar::forMonth(2024, 11, DayName::Sunday);
-        $this->assertSame(DayName::Sunday, $calendar->getStartDay());
+        $calendar = Calendar::forMonth(2024, 11, WeekStart::Sunday);
+        $this->assertSame(WeekStart::Sunday, $calendar->getStartDay());
     }
 
     public function testForWeek(): void
@@ -87,13 +88,13 @@ class CalendarApiExtensionsTest extends TestCase
 
     public function testWithDateChangesDatePreservesSettings(): void
     {
-        $original = (new Calendar(new DateTimeImmutable('2024-11-01'), CalendarType::Monthly, DayName::Sunday))
+        $original = (new Calendar(new DateTimeImmutable('2024-11-01'), CalendarType::Monthly, WeekStart::Sunday))
             ->disableDays(new DateTimeImmutable('2024-11-11'));
 
         $moved = $original->withDate(new DateTimeImmutable('2025-03-01'));
 
         $this->assertSame('2025-03', $moved->getDate()->format('Y-m'));
-        $this->assertSame(DayName::Sunday, $moved->getStartDay());
+        $this->assertSame(WeekStart::Sunday, $moved->getStartDay());
         // disabled days carry over
         $this->assertTrue($moved->isDayDisabled(new DateTimeImmutable('2024-11-11')));
     }

@@ -10,6 +10,7 @@ use Tito10047\Calendar\Calendar;
 use Tito10047\Calendar\Day;
 use Tito10047\Calendar\Enum\CalendarType;
 use Tito10047\Calendar\Enum\DayName;
+use Tito10047\Calendar\Enum\WeekStart;
 
 class CalendarDaysTest extends TestCase
 {
@@ -18,7 +19,7 @@ class CalendarDaysTest extends TestCase
         $calendar = new Calendar(
             new DateTimeImmutable('2024-11-04'),
             CalendarType::WorkWeek,
-            DayName::Monday,
+            WeekStart::Monday,
         );
         $calendar = $calendar->disableDaysByName(DayName::Saturday, DayName::Sunday);
         $dayTable = $calendar->getDaysTable();
@@ -46,7 +47,7 @@ class CalendarDaysTest extends TestCase
         $calendar = new Calendar(
             new DateTimeImmutable('2024-11-01'),
             CalendarType::WorkWeek,
-            DayName::Monday,
+            WeekStart::Monday,
         );
         $calendar = $calendar->disableDaysByName(DayName::Saturday, DayName::Sunday);
         $daysTable = $calendar->getDaysTable();
@@ -78,7 +79,7 @@ class CalendarDaysTest extends TestCase
         $calendar = new Calendar(
             new DateTimeImmutable('2024-11-01'),
             CalendarType::Monthly,
-            DayName::Monday,
+            WeekStart::Monday,
         );
         $daysTable = $calendar->getDaysTable();
         $this->assertCount(5, $daysTable);
@@ -101,7 +102,7 @@ class CalendarDaysTest extends TestCase
         $calendar = new Calendar(
             new DateTimeImmutable('2024-11-05'),
             CalendarType::Weekly,
-            DayName::Monday,
+            WeekStart::Monday,
         );
         $daysTable = $calendar->getDaysTable();
         $this->assertCount(1, $daysTable);
@@ -122,7 +123,7 @@ class CalendarDaysTest extends TestCase
         $calendar = new Calendar(
             new DateTimeImmutable('2024-11-05'),
             CalendarType::Weekly,
-            DayName::Monday,
+            WeekStart::Monday,
         );
         foreach (array_merge(...$calendar->getDaysTable()) as $day) {
             $this->assertFalse($day->ghost, "Weekly view should have no ghost days, found one on {$day->date->format('Y-m-d')}");
@@ -135,7 +136,7 @@ class CalendarDaysTest extends TestCase
         $calendar = new Calendar(
             new DateTimeImmutable('2024-11-04'),
             CalendarType::Monthly,
-            DayName::Monday,
+            WeekStart::Monday,
         );
         /** @var Day[] $days */
         $days = array_merge(...$calendar->getDaysTable());

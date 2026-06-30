@@ -10,6 +10,7 @@ use PHPUnit\Framework\TestCase;
 use Tito10047\Calendar\Calendar;
 use Tito10047\Calendar\Enum\CalendarType;
 use Tito10047\Calendar\Enum\DayName;
+use Tito10047\Calendar\Enum\WeekStart;
 use Tito10047\Calendar\Interface\DayDataLoaderInterface;
 
 class CalendarTest extends TestCase
@@ -19,7 +20,7 @@ class CalendarTest extends TestCase
         $calendar = new Calendar(
             new DateTimeImmutable('2024-11-04'),
             CalendarType::WorkWeek,
-            DayName::Monday,
+            WeekStart::Monday,
         );
         $this->assertFalse($calendar->isFirstDay(new DateTimeImmutable('2024-10-01')));
         $this->assertTrue($calendar->isFirstDay(new DateTimeImmutable('2024-11-01')));
@@ -33,7 +34,7 @@ class CalendarTest extends TestCase
         $calendar = new Calendar(
             new DateTimeImmutable('2024-11-04'),
             CalendarType::WorkWeek,
-            DayName::Monday,
+            WeekStart::Monday,
         );
         $this->assertFalse($calendar->isLastDay(new DateTimeImmutable('2024-11-01')));
         $this->assertFalse($calendar->isLastDay(new DateTimeImmutable('2024-11-02')));
@@ -204,7 +205,7 @@ class CalendarTest extends TestCase
         $calendar = new Calendar(
             new DateTimeImmutable('2024-11-04'),
             CalendarType::WorkWeek,
-            DayName::Monday,
+            WeekStart::Monday,
         );
         $this->assertFalse($calendar->isFirstDay(new DateTimeImmutable('2024-10-01')));
         $this->assertTrue($calendar->isFirstDay(new DateTimeImmutable('2024-11-01')));
@@ -218,7 +219,7 @@ class CalendarTest extends TestCase
         $calendar = new Calendar(
             new DateTimeImmutable('2024-11-04'),
             CalendarType::WorkWeek,
-            DayName::Monday,
+            WeekStart::Monday,
         );
         $this->assertFalse($calendar->isLastDay(new DateTimeImmutable('2024-11-01')));
         $this->assertFalse($calendar->isLastDay(new DateTimeImmutable('2024-11-02')));

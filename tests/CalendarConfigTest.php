@@ -10,6 +10,7 @@ use Tito10047\Calendar\Calendar;
 use Tito10047\Calendar\CalendarConfig;
 use Tito10047\Calendar\Enum\CalendarType;
 use Tito10047\Calendar\Enum\DayName;
+use Tito10047\Calendar\Enum\WeekStart;
 
 class CalendarConfigTest extends TestCase
 {
@@ -18,12 +19,12 @@ class CalendarConfigTest extends TestCase
         $config1 = new CalendarConfig(
             date: new DateTimeImmutable('2024-11-01'),
             type: CalendarType::Monthly,
-            startDay: DayName::Monday,
+            startDay: WeekStart::Monday,
         );
         $config2 = new CalendarConfig(
             date: new DateTimeImmutable('2024-11-01'),
             type: CalendarType::Monthly,
-            startDay: DayName::Monday,
+            startDay: WeekStart::Monday,
         );
 
         $this->assertSame($config1->cacheKey(), $config2->cacheKey());
@@ -119,7 +120,7 @@ class CalendarConfigTest extends TestCase
         $config = new CalendarConfig(
             date: new DateTimeImmutable('2024-11-01'),
             type: CalendarType::Monthly,
-            startDay: DayName::Monday,
+            startDay: WeekStart::Monday,
             disabledDays: [new DateTimeImmutable('2024-11-11')],
             disabledDayNames: [DayName::Saturday, DayName::Sunday],
             enabledDays: [new DateTimeImmutable('2024-11-30')],
@@ -128,7 +129,7 @@ class CalendarConfigTest extends TestCase
         $calendar = Calendar::fromConfig($config);
 
         $this->assertSame('2024-11', $calendar->getDate()->format('Y-m'));
-        $this->assertSame(DayName::Monday, $calendar->getStartDay());
+        $this->assertSame(WeekStart::Monday, $calendar->getStartDay());
         $this->assertTrue($calendar->isDayDisabled(new DateTimeImmutable('2024-11-11')));
         $this->assertSame([DayName::Saturday, DayName::Sunday], $calendar->getDisabledDayNames());
         $this->assertFalse($calendar->isDayDisabled(new DateTimeImmutable('2024-11-30')), 'enabledDays must override disabledDayNames');
@@ -173,7 +174,7 @@ class CalendarConfigTest extends TestCase
         $config = new CalendarConfig(
             date: new DateTimeImmutable('2024-11-01'),
             type: CalendarType::Monthly,
-            startDay: DayName::Monday,
+            startDay: WeekStart::Monday,
             disabledDays: [new DateTimeImmutable('2024-11-11')],
         );
 

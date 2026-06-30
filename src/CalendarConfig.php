@@ -7,6 +7,7 @@ namespace Tito10047\Calendar;
 use DateTimeImmutable;
 use Tito10047\Calendar\Enum\CalendarType;
 use Tito10047\Calendar\Enum\DayName;
+use Tito10047\Calendar\Enum\WeekStart;
 
 /**
  * Pure value object holding all calendar configuration.
@@ -47,7 +48,7 @@ final class CalendarConfig implements \Stringable
     public function __construct(
         public readonly DateTimeImmutable $date,
         public readonly CalendarType $type = CalendarType::Monthly,
-        public readonly DayName $startDay = DayName::Monday,
+        public readonly WeekStart $startDay = WeekStart::Monday,
         array $disabledDays = [],
         public readonly array $disabledDayNames = [],
         array $enabledDays = [],

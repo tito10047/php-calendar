@@ -7,6 +7,7 @@ namespace Tito10047\Calendar\Interface;
 use DateTimeImmutable;
 use Tito10047\Calendar\Day;
 use Tito10047\Calendar\Enum\DayName;
+use Tito10047\Calendar\Enum\WeekStart;
 
 interface CalendarInterface
 {
@@ -19,7 +20,7 @@ interface CalendarInterface
     /** @return array{from: DateTimeImmutable, to: DateTimeImmutable} */
     public function getDateRange(): array;
 
-    public function getStartDay(): DayName;
+    public function getStartDay(): WeekStart;
 
     /**
      * Date-specific disabled dates only (not name-pattern disabled days).

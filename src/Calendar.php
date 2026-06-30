@@ -8,6 +8,7 @@ use DateTimeImmutable;
 use Tito10047\Calendar\DataLoader\ArrayDataLoader;
 use Tito10047\Calendar\Enum\CalendarType;
 use Tito10047\Calendar\Enum\DayName;
+use Tito10047\Calendar\Enum\WeekStart;
 use Tito10047\Calendar\Interface\CalendarInterface;
 use Tito10047\Calendar\Interface\DayDataLoaderInterface;
 use Tito10047\Calendar\Interface\DaysGeneratorInterface;
@@ -25,7 +26,7 @@ final class Calendar implements CalendarInterface
     public function __construct(
         private readonly DateTimeImmutable $date,
         private readonly DaysGeneratorInterface $daysGenerator = CalendarType::Monthly,
-        private readonly DayName $startDay = DayName::Monday,
+        private readonly WeekStart $startDay = WeekStart::Monday,
         private readonly array $disabledDays = [],
         private readonly array $disabledDayNames = [],
         private readonly array $enabledDays = [],
@@ -42,7 +43,7 @@ final class Calendar implements CalendarInterface
     // Named constructors
     // -------------------------------------------------------------------------
 
-    public static function forMonth(int $year, int $month, DayName $startDay = DayName::Monday): self
+    public static function forMonth(int $year, int $month, WeekStart $startDay = WeekStart::Monday): self
     {
         return new self(
             date: new DateTimeImmutable(sprintf('%04d-%02d-01', $year, $month)),
@@ -51,7 +52,7 @@ final class Calendar implements CalendarInterface
         );
     }
 
-    public static function forWeek(DateTimeImmutable $date, DayName $startDay = DayName::Monday): self
+    public static function forWeek(DateTimeImmutable $date, WeekStart $startDay = WeekStart::Monday): self
     {
         return new self(
             date: $date,
@@ -62,7 +63,7 @@ final class Calendar implements CalendarInterface
 
     public static function forToday(
         DaysGeneratorInterface $type = CalendarType::Monthly,
-        DayName $startDay = DayName::Monday,
+        WeekStart $startDay = WeekStart::Monday,
     ): self {
         return new self(
             date: new DateTimeImmutable('today'),
@@ -125,7 +126,7 @@ final class Calendar implements CalendarInterface
         ];
     }
 
-    public function getStartDay(): DayName
+    public function getStartDay(): WeekStart
     {
         return $this->startDay;
     }
