@@ -347,6 +347,27 @@ final class RecurrenceRule
         return $this->byNthWeekday;
     }
 
+    /** @return list<int>|null */
+    public function getByMonth(): ?array
+    {
+        return $this->byMonth;
+    }
+
+    /** Set BYMONTH constraint (month numbers 1–12). */
+    public function onMonths(int ...$months): self
+    {
+        return new self(
+            $this->frequency,
+            $this->interval,
+            $this->count,
+            $this->until,
+            $this->byDay,
+            $this->byNthWeekday,
+            array_values($months),
+            $this->exDates,
+        );
+    }
+
     // -------------------------------------------------------------------------
     // Internal helpers
     // -------------------------------------------------------------------------
