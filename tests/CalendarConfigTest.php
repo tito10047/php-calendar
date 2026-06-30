@@ -73,6 +73,47 @@ class CalendarConfigTest extends TestCase
         $this->assertSame($config->cacheKey(), (string) $config);
     }
 
+    public function testCacheKeyChangesWhenDisabledDayNamesChange(): void
+    {
+        $a = new CalendarConfig(date: new DateTimeImmutable('2024-11-01'));
+        $b = new CalendarConfig(
+            date: new DateTimeImmutable('2024-11-01'),
+            disabledDayNames: [DayName::Saturday, DayName::Sunday],
+        );
+
+        $this->assertNotSame($a->cacheKey(), $b->cacheKey());
+    }
+
+    public function testCacheKeyChangesWhenEnabledDaysChange(): void
+    {
+        $a = new CalendarConfig(date: new DateTimeImmutable('2024-11-01'));
+        $b = new CalendarConfig(
+            date: new DateTimeImmutable('2024-11-01'),
+            enabledDays: [new DateTimeImmutable('2024-11-30')],
+        );
+
+        $this->assertNotSame($a->cacheKey(), $b->cacheKey());
+    }
+
+    public function testCacheKeyIsOrderIndependentForAllLists(): void
+    {
+        $d1 = new DateTimeImmutable('2024-11-11');
+        $d2 = new DateTimeImmutable('2024-11-15');
+
+        $a = new CalendarConfig(
+            date: new DateTimeImmutable('2024-11-01'),
+            disabledDays: [$d1, $d2],
+            disabledDayNames: [DayName::Saturday, DayName::Sunday],
+        );
+        $b = new CalendarConfig(
+            date: new DateTimeImmutable('2024-11-01'),
+            disabledDays: [$d2, $d1],
+            disabledDayNames: [DayName::Sunday, DayName::Saturday],
+        );
+
+        $this->assertSame($a->cacheKey(), $b->cacheKey());
+    }
+
     public function testFromConfigReconstructsCalendar(): void
     {
         $config = new CalendarConfig(
@@ -80,6 +121,8 @@ class CalendarConfigTest extends TestCase
             type: CalendarType::Monthly,
             startDay: DayName::Monday,
             disabledDays: [new DateTimeImmutable('2024-11-11')],
+            disabledDayNames: [DayName::Saturday, DayName::Sunday],
+            enabledDays: [new DateTimeImmutable('2024-11-30')],
         );
 
         $calendar = Calendar::fromConfig($config);
@@ -87,6 +130,9 @@ class CalendarConfigTest extends TestCase
         $this->assertSame('2024-11', $calendar->getDate()->format('Y-m'));
         $this->assertSame(DayName::Monday, $calendar->getStartDay());
         $this->assertTrue($calendar->isDayDisabled(new DateTimeImmutable('2024-11-11')));
+        $this->assertSame([DayName::Saturday, DayName::Sunday], $calendar->getDisabledDayNames());
+        $this->assertFalse($calendar->isDayDisabled(new DateTimeImmutable('2024-11-30')), 'enabledDays must override disabledDayNames');
+        $this->assertTrue($calendar->isDayDisabled(new DateTimeImmutable('2024-11-23')), 'Other Saturdays must remain disabled');
     }
 
     public function testFromConfigWithData(): void

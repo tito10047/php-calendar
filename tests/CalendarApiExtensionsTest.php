@@ -173,16 +173,98 @@ class CalendarApiExtensionsTest extends TestCase
         $this->assertSame('2024-11-10', $range['to']->format('Y-m-d'));
     }
 
-    public function testPeriodNavigationClearsDisabledDays(): void
+    public function testPeriodNavigationClearsDateSpecificDisabledDays(): void
     {
         $calendar = Calendar::forMonth(2024, 11)
             ->disableDays(new DateTimeImmutable('2024-11-15'));
 
         $next = $calendar->nextPeriod();
-        $this->assertCount(0, $next->getDisabledDays());
+        $this->assertCount(0, $next->getDisabledDays(), 'Date-specific disabled days must reset on nextPeriod');
 
         $prev = $calendar->prevPeriod();
-        $this->assertCount(0, $prev->getDisabledDays());
+        $this->assertCount(0, $prev->getDisabledDays(), 'Date-specific disabled days must reset on prevPeriod');
+    }
+
+    public function testPeriodNavigationPreservesDisabledDayNames(): void
+    {
+        $november = Calendar::forMonth(2024, 11)
+            ->disableDaysByName(DayName::Saturday, DayName::Sunday);
+
+        $december = $november->nextPeriod();
+
+        $this->assertSame(
+            [DayName::Saturday, DayName::Sunday],
+            $december->getDisabledDayNames(),
+            'Structural day-name rules must survive period navigation',
+        );
+
+        // Verify weekends are actually disabled in December
+        foreach ($december->getDaysTable() as $week) {
+            foreach ($week as $isoDay => $day) {
+                if ($isoDay === 6 || $isoDay === 7) {
+                    $this->assertFalse($day->enabled, "Weekend {$day->date->format('Y-m-d')} must be disabled in December");
+                }
+            }
+        }
+    }
+
+    public function testPeriodNavigationResetsBothDisabledDaysAndEnabledDays(): void
+    {
+        $calendar = Calendar::forMonth(2024, 11)
+            ->disableDaysByName(DayName::Saturday, DayName::Sunday)
+            ->disableDays(new DateTimeImmutable('2024-11-11'))  // public holiday
+            ->enableDays(new DateTimeImmutable('2024-11-30'));  // exceptional Saturday
+
+        $next = $calendar->nextPeriod();
+
+        $this->assertCount(0, $next->getDisabledDays(), 'Date-specific disabled days must reset');
+        $this->assertCount(0, $next->getEnabledDays(), 'Enabled-day exceptions must reset');
+        $this->assertCount(2, $next->getDisabledDayNames(), 'Structural day-name rules must persist');
+    }
+
+    public function testDisableDaysByNameStoresNamesNotDates(): void
+    {
+        $calendar = Calendar::forMonth(2024, 11)
+            ->disableDaysByName(DayName::Saturday, DayName::Sunday);
+
+        $this->assertSame([DayName::Saturday, DayName::Sunday], $calendar->getDisabledDayNames());
+        $this->assertCount(0, $calendar->getDisabledDays(), 'disableDaysByName must not pollute the date-specific list');
+    }
+
+    public function testEnableDaysOverridesNameBasedDisable(): void
+    {
+        $calendar = Calendar::forMonth(2024, 11)
+            ->disableDaysByName(DayName::Saturday, DayName::Sunday)
+            ->enableDays(new DateTimeImmutable('2024-11-30')); // exceptional Saturday
+
+        $this->assertFalse($calendar->isDayDisabled(new DateTimeImmutable('2024-11-30')), '2024-11-30 must be enabled as exception');
+        $this->assertTrue($calendar->isDayDisabled(new DateTimeImmutable('2024-11-23')), 'Other Saturdays must remain disabled');
+        $this->assertCount(1, $calendar->getEnabledDays());
+    }
+
+    public function testExplicitDisableWinsOverEnabledException(): void
+    {
+        // disableDays() must override a previous enableDays() for the same date
+        $calendar = Calendar::forMonth(2024, 11)
+            ->enableDays(new DateTimeImmutable('2024-11-11'))
+            ->disableDays(new DateTimeImmutable('2024-11-11'));
+
+        $this->assertTrue($calendar->isDayDisabled(new DateTimeImmutable('2024-11-11')));
+        $this->assertCount(0, $calendar->getEnabledDays(), 'disableDays must remove the date from enabledDays');
+    }
+
+    public function testWithDatePreservesAllThreeLayers(): void
+    {
+        $original = Calendar::forMonth(2024, 11)
+            ->disableDaysByName(DayName::Saturday, DayName::Sunday)
+            ->disableDays(new DateTimeImmutable('2024-11-11'))
+            ->enableDays(new DateTimeImmutable('2024-11-30'));
+
+        $march = $original->withDate(new DateTimeImmutable('2025-03-01'));
+
+        $this->assertSame($original->getDisabledDayNames(), $march->getDisabledDayNames());
+        $this->assertCount(1, $march->getDisabledDays());
+        $this->assertCount(1, $march->getEnabledDays());
     }
 
     public function testNextPeriodPreservesDataLoader(): void
