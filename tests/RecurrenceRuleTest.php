@@ -56,7 +56,7 @@ class RecurrenceRuleTest extends TestCase
         // A rule starting with 'U' must not be mutilated when no "RRULE:" prefix is present.
         $rule = RecurrenceRule::fromRrule('FREQ=WEEKLY;UNTIL=20241231T235959Z');
         $this->assertNotNull($rule->getUntil(), 'UNTIL must be parsed when rule has no RRULE: prefix');
-        $this->assertSame('2024-12-31', $rule->getUntil()?->format('Y-m-d'));
+        $this->assertSame('2024-12-31', $rule->getUntil()->format('Y-m-d'));
     }
 
     public function testFromRruleParsesInterval(): void
