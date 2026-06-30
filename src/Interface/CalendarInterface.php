@@ -1,4 +1,6 @@
 <?php
+
+declare(strict_types=1);
 /**
  * Created by PhpStorm.
  * User: Jozef Môstka
@@ -83,7 +85,7 @@ interface CalendarInterface
 
     /**
      * Return array of disabled days
-     * @return array<string, DateTimeImmutable>
+     * @return list<DateTimeImmutable>
      */
     public function getDisabledDays(): array;
 

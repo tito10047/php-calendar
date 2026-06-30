@@ -1,4 +1,6 @@
 <?php
+
+declare(strict_types=1);
 /**
  * Created by PhpStorm.
  * User: Jozef Môstka
@@ -10,9 +12,9 @@ namespace Tito10047\Calendar\Interface;
 
 interface EventInterface
 {
-    public function getFrom():\DateTimeImmutable;
-    public function getTo():\DateTimeImmutable;
-    public function getTitle():string;
-    public function getDescription():string;
-    public function getStatus():string;
+    public function getFrom(): \DateTimeImmutable;
+    public function getTo(): \DateTimeImmutable;
+    public function getTitle(): string;
+    public function getDescription(): string;
+    public function getStatus(): string;
 }

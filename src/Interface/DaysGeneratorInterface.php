@@ -1,4 +1,6 @@
 <?php
+
+declare(strict_types=1);
 /**
  * Created by PhpStorm.
  * User: Jozef Môstka
@@ -12,5 +14,8 @@ use Tito10047\Calendar\Enum\DayName;
 
 interface DaysGeneratorInterface
 {
-    public function getDays(\DateTimeImmutable $day, DayName $firstDay):array;
+    /**
+     * @return list<\DateTimeImmutable>
+     */
+    public function getDays(\DateTimeImmutable $day, DayName $firstDay): array;
 }

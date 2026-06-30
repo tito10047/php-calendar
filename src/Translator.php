@@ -1,4 +1,6 @@
 <?php
+
+declare(strict_types=1);
 /**
  * Created by PhpStorm.
  * User: Jozef Môstka
@@ -12,7 +14,6 @@ use Symfony\Contracts\Translation\TranslatorInterface;
 
 final class Translator implements TranslatorInterface
 {
-
     public function trans(string $id, array $parameters = [], ?string $domain = null, ?string $locale = null): string
     {
         return $id;

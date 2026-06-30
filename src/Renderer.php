@@ -1,4 +1,6 @@
 <?php
+
+declare(strict_types=1);
 /**
  * Created by PhpStorm.
  * User: Jozef Môstka
@@ -8,15 +10,10 @@
 
 namespace Tito10047\Calendar;
 
-use Symfony\Contracts\Translation\TranslatorInterface;
 use Tito10047\Calendar\Enum\CalendarType;
 use Tito10047\Calendar\Enum\DayName;
 use Tito10047\Calendar\Interface\CalendarInterface;
-use Tito10047\Calendar\Interface\DayNameRendererInterface;
-use Tito10047\Calendar\Interface\DayRendererInterface;
-use Tito10047\Calendar\Interface\EventRendererInterface;
 use Tito10047\Calendar\Interface\MonthRendererInterface;
-use Tito10047\Calendar\Interface\WeekRowRendererInterface;
 use Tito10047\Calendar\Renderer\DayNameRenderer;
 use Tito10047\Calendar\Renderer\DayRenderer;
 use Tito10047\Calendar\Renderer\EventRenderer;
@@ -25,13 +22,13 @@ use Tito10047\Calendar\Renderer\WeekRowRenderer;
 
 final class Renderer
 {
-
     public function __construct(
         private readonly MonthRendererInterface $monthRenderer,
     ) {
     }
 
-    public static function factory(CalendarType $type,string $translationDomain):self{
+    public static function factory(CalendarType $type, string $translationDomain): self
+    {
         $translator = new Translator();
         $eventRenderer = new EventRenderer(
             $translator,
@@ -43,7 +40,9 @@ final class Renderer
         );
         $dayRenderer = new DayRenderer(
             $eventRenderer,
-            $type, $translator, $translationDomain
+            $type,
+            $translator,
+            $translationDomain
         );
         $weekRowRenderer = new WeekRowRenderer(
             $dayRenderer

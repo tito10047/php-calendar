@@ -1,4 +1,6 @@
 <?php
+
+declare(strict_types=1);
 /**
  * Created by PhpStorm.
  * User: Jozef Môstka
@@ -15,14 +17,12 @@ use Tito10047\Calendar\Interface\EventRendererInterface;
 
 class DayRenderer implements \Tito10047\Calendar\Interface\DayRendererInterface
 {
-
     public function __construct(
         private EventRendererInterface $eventRenderer,
         private CalendarType $type,
         private ?TranslatorInterface $translator = null,
         private ?string $translationDomain = null,
-    )
-    {
+    ) {
     }
 
 
@@ -38,11 +38,11 @@ class DayRenderer implements \Tito10047\Calendar\Interface\DayRendererInterface
             $eventsHtml .= '</li>';
         }
         return <<<HTML
-<div class="day">
-    <span class="name">{$dayName}</span>
-    {$eventsHtml}
-</div>
-HTML;
+            <div class="day">
+                <span class="name">{$dayName}</span>
+                {$eventsHtml}
+            </div>
+            HTML;
 
     }
 }

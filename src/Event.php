@@ -1,4 +1,6 @@
 <?php
+
+declare(strict_types=1);
 /**
  * Created by PhpStorm.
  * User: Jozef Môstka
@@ -12,16 +14,13 @@ use Tito10047\Calendar\Interface\EventInterface;
 
 class Event implements EventInterface
 {
-
-
     public function __construct(
         private \DateTimeImmutable $from,
         private \DateTimeImmutable $to,
         private string $title,
         private string $description,
         private string $status
-    )
-    {
+    ) {
     }
 
     public function getFrom(): \DateTimeImmutable
