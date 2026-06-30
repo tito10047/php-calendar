@@ -37,6 +37,13 @@ interface CalendarInterface
     public function disableDays(DateTimeImmutable ...$days): self;
 
     /**
+     * Re-enable previously disabled days. Inverse of disableDays().
+     * @param DateTimeImmutable ...$days
+     * @return self
+     */
+    public function enableDays(DateTimeImmutable ...$days): self;
+
+    /**
      * Disable specific days by name, like Monday, Tuesday, etc. use DayName enum
      * @param DayName ...$daysToDisable
      * @return self
@@ -51,18 +58,42 @@ interface CalendarInterface
     public function disableWeek(int $weekNum): self;
 
     /**
+     * Return a new instance with a different reference date, keeping all other settings (generator, startDay, disabledDays, dataLoader).
+     */
+    public function withDate(DateTimeImmutable $date): self;
+
+    /**
      * Clone current calendar with new date of the next month. It will return new instance of the calendar.
-     * Disable days will be cleared
+     * Disabled days will be cleared.
      * @return self
      */
     public function nextMonth(): self;
 
     /**
      * Clone current calendar with new date of the previous month. It will return new instance of the calendar.
-     * Disable days will be cleared
+     * Disabled days will be cleared.
      * @return self
      */
     public function prevMonth(): self;
+
+    /**
+     * Advance by one period as defined by the generator (month for Monthly, week for Weekly/WorkWeek).
+     * Disabled days are cleared; all other settings are preserved.
+     */
+    public function nextPeriod(): self;
+
+    /**
+     * Retreat by one period as defined by the generator (month for Monthly, week for Weekly/WorkWeek).
+     * Disabled days are cleared; all other settings are preserved.
+     */
+    public function prevPeriod(): self;
+
+    /**
+     * Return the exact date range covered by this calendar instance.
+     *
+     * @return array{from: DateTimeImmutable, to: DateTimeImmutable}
+     */
+    public function getDateRange(): array;
 
     /**
      * Return array of days in current calendar. Days are grouped by weeks indexed by week number. Days in week are indexed by day number

@@ -1,12 +1,6 @@
 <?php
 
 declare(strict_types=1);
-/**
- * Created by PhpStorm.
- * User: Jozef Môstka
- * Date: 9. 11. 2024
- * Time: 15:54
- */
 
 namespace Tito10047\Calendar;
 
@@ -21,7 +15,6 @@ final class Calendar implements CalendarInterface
 {
     /** @var non-empty-list<DateTimeImmutable> */
     private array $days;
-
 
     public function __construct(
         private readonly DateTimeImmutable $date,
@@ -38,11 +31,73 @@ final class Calendar implements CalendarInterface
         $this->days = $days;
     }
 
+    // -------------------------------------------------------------------------
+    // Named constructors
+    // -------------------------------------------------------------------------
+
+    public static function forMonth(int $year, int $month, DayName $startDay = DayName::Monday): self
+    {
+        return new self(
+            date: new DateTimeImmutable(sprintf('%04d-%02d-01', $year, $month)),
+            daysGenerator: CalendarType::Monthly,
+            startDay: $startDay,
+        );
+    }
+
+    public static function forWeek(DateTimeImmutable $date, DayName $startDay = DayName::Monday): self
+    {
+        return new self(
+            date: $date,
+            daysGenerator: CalendarType::Weekly,
+            startDay: $startDay,
+        );
+    }
+
+    public static function forToday(
+        DaysGeneratorInterface $type = CalendarType::Monthly,
+        DayName $startDay = DayName::Monday,
+    ): self {
+        return new self(
+            date: new DateTimeImmutable('today'),
+            daysGenerator: $type,
+            startDay: $startDay,
+        );
+    }
+
+    // -------------------------------------------------------------------------
+    // Accessors
+    // -------------------------------------------------------------------------
+
     public function getDate(): DateTimeImmutable
     {
         return $this->date;
     }
 
+    /**
+     * @return array{from: DateTimeImmutable, to: DateTimeImmutable}
+     */
+    public function getDateRange(): array
+    {
+        return [
+            'from' => $this->days[0],
+            'to'   => $this->days[array_key_last($this->days)],
+        ];
+    }
+
+    // -------------------------------------------------------------------------
+    // Immutable mutations
+    // -------------------------------------------------------------------------
+
+    public function withDate(DateTimeImmutable $date): self
+    {
+        return new self(
+            date: $date,
+            daysGenerator: $this->daysGenerator,
+            startDay: $this->startDay,
+            disabledDays: $this->disabledDays,
+            dataLoader: $this->dataLoader,
+        );
+    }
 
     public function disableDaysRange(?DateTimeImmutable $from = null, ?DateTimeImmutable $to = null): self
     {
@@ -75,7 +130,22 @@ final class Calendar implements CalendarInterface
             daysGenerator: $this->daysGenerator,
             startDay: $this->startDay,
             disabledDays: $disabledDays,
-            dataLoader: $this->dataLoader
+            dataLoader: $this->dataLoader,
+        );
+    }
+
+    public function enableDays(DateTimeImmutable ...$days): self
+    {
+        $disabledDays = $this->disabledDays;
+        foreach ($days as $day) {
+            unset($disabledDays[$day->format('Y-m-d')]);
+        }
+        return new self(
+            date: $this->date,
+            daysGenerator: $this->daysGenerator,
+            startDay: $this->startDay,
+            disabledDays: $disabledDays,
+            dataLoader: $this->dataLoader,
         );
     }
 
@@ -117,25 +187,55 @@ final class Calendar implements CalendarInterface
 
     public function nextMonth(): self
     {
-        $date = $this->date->modify('+1 month')->modify("first day of this month");
+        $date = $this->date->modify('+1 month')->modify('first day of this month');
         return new self(
             date: $date,
             daysGenerator: $this->daysGenerator,
             startDay: $this->startDay,
             disabledDays: [],
-            dataLoader: $this->dataLoader
+            dataLoader: $this->dataLoader,
         );
     }
 
     public function prevMonth(): self
     {
-        $date = $this->date->modify('-1 month')->modify("first day of this month");
+        $date = $this->date->modify('-1 month')->modify('first day of this month');
         return new self(
             date: $date,
             daysGenerator: $this->daysGenerator,
             startDay: $this->startDay,
             disabledDays: [],
-            dataLoader: $this->dataLoader
+            dataLoader: $this->dataLoader,
+        );
+    }
+
+    public function nextPeriod(): self
+    {
+        $date = $this->date->add($this->daysGenerator->getNavigationStep());
+        if ($this->daysGenerator->hasGhostDays()) {
+            $date = $date->modify('first day of this month');
+        }
+        return new self(
+            date: $date,
+            daysGenerator: $this->daysGenerator,
+            startDay: $this->startDay,
+            disabledDays: [],
+            dataLoader: $this->dataLoader,
+        );
+    }
+
+    public function prevPeriod(): self
+    {
+        $date = $this->date->sub($this->daysGenerator->getNavigationStep());
+        if ($this->daysGenerator->hasGhostDays()) {
+            $date = $date->modify('first day of this month');
+        }
+        return new self(
+            date: $date,
+            daysGenerator: $this->daysGenerator,
+            startDay: $this->startDay,
+            disabledDays: [],
+            dataLoader: $this->dataLoader,
         );
     }
 

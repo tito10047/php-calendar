@@ -17,6 +17,15 @@ enum CalendarType implements DaysGeneratorInterface
         return $this === self::Monthly;
     }
 
+    public function getNavigationStep(): \DateInterval
+    {
+        return match ($this) {
+            self::Monthly   => new \DateInterval('P1M'),
+            self::Weekly,
+            self::WorkWeek  => new \DateInterval('P7D'),
+        };
+    }
+
     /**
      * @return list<\DateTimeImmutable>
      */

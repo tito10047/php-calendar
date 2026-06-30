@@ -24,4 +24,10 @@ interface DaysGeneratorInterface
      * Return false for week-based generators where every day in the range is a first-class cell.
      */
     public function hasGhostDays(): bool;
+
+    /**
+     * How far to advance/retreat when calling Calendar::nextPeriod() / prevPeriod().
+     * Monthly generators return P1M; week-based generators return P7D.
+     */
+    public function getNavigationStep(): \DateInterval;
 }
