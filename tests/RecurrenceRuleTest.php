@@ -123,7 +123,7 @@ class RecurrenceRuleTest extends TestCase
 
     public function testDailyWithCount(): void
     {
-        $rule   = RecurrenceRule::daily()->count(3);
+        $rule   = RecurrenceRule::daily()->limitTo(3);
         $from   = new DateTimeImmutable('2024-11-01');
         $to     = new DateTimeImmutable('2024-11-30');
         $result = $this->format($rule->expand($from, $to));
@@ -246,8 +246,20 @@ class RecurrenceRuleTest extends TestCase
 
     public function testToRruleStringIncludesInterval(): void
     {
-        $rule = RecurrenceRule::daily()->every(3)->count(5);
+        $rule = RecurrenceRule::daily()->every(3)->limitTo(5);
         $this->assertStringContainsString('INTERVAL=3', $rule->toRruleString());
         $this->assertStringContainsString('COUNT=5', $rule->toRruleString());
+    }
+
+    public function testLimitToThrowsOnZero(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+        RecurrenceRule::daily()->limitTo(0);
+    }
+
+    public function testLimitToThrowsOnNegative(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+        RecurrenceRule::daily()->limitTo(-1);
     }
 }

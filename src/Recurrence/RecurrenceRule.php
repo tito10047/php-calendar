@@ -23,7 +23,7 @@ use Tito10047\Calendar\Enum\DayName;
  *   ->onDays(DayName::Monday, DayName::Friday)
  *   ->onNthWeekday(1, DayName::Monday)   // first Monday of month
  *   ->every(2)                           // interval
- *   ->count(10)
+ *   ->limitTo(10)
  *   ->until(new DateTimeImmutable('2024-12-31'))
  *
  * Finally expand to concrete occurrences:
@@ -179,12 +179,16 @@ final class RecurrenceRule
         );
     }
 
-    public function count(int $count): self
+    /** Limit expansion to $occurrences results. Throws if $occurrences < 1. */
+    public function limitTo(int $occurrences): self
     {
+        if ($occurrences < 1) {
+            throw new \InvalidArgumentException("COUNT must be >= 1, got {$occurrences}");
+        }
         return new self(
             $this->frequency,
             $this->interval,
-            $count,
+            $occurrences,
             null,
             $this->byDay,
             $this->byNthWeekday,
