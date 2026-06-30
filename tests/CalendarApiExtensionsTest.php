@@ -271,6 +271,7 @@ class CalendarApiExtensionsTest extends TestCase
     public function testNextPeriodPreservesDataLoader(): void
     {
         $loader = $this->createStub(\Tito10047\Calendar\Interface\DayDataLoaderInterface::class);
+        $loader->method('load')->willReturnSelf();
         $loader->method('getData')->willReturn(['test' => true]);
 
         $calendar = Calendar::forMonth(2024, 11)->setDataLoader($loader);

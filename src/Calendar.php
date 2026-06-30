@@ -360,7 +360,8 @@ final class Calendar implements CalendarInterface
         $today         = date('Y-m-d');
         $rows          = [];
 
-        $this->dataLoader?->load($days[0], $days[array_key_last($days)]);
+        // Use the instance returned by load() — immutable loaders return a new populated object.
+        $loader = $this->dataLoader?->load($days[0], $days[array_key_last($days)]);
 
         while ($days !== []) {
             $firstDay = $days[0];
@@ -374,7 +375,7 @@ final class Calendar implements CalendarInterface
                     ghost: $ghostsEnabled && $day->format('m') !== $thisMonthNum,
                     today: $day->format('Y-m-d') === $today,
                     enabled: $this->resolveEnabled($day),
-                    data: $this->dataLoader?->getData($day),
+                    data: $loader?->getData($day),
                 );
             }
 

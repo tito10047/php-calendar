@@ -23,9 +23,9 @@ final class ArrayDataLoader implements DayDataLoaderInterface
     {
     }
 
-    public function load(DateTimeImmutable $from, DateTimeImmutable $to): void
+    public function load(DateTimeImmutable $from, DateTimeImmutable $to): static
     {
-        // Data is already loaded — nothing to do.
+        return $this; // data is provided at construction time, nothing to expand
     }
 
     /**

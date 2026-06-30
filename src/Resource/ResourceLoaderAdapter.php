@@ -21,9 +21,10 @@ final class ResourceLoaderAdapter implements DayDataLoaderInterface
     ) {
     }
 
-    public function load(DateTimeImmutable $from, DateTimeImmutable $to): void
+    public function load(DateTimeImmutable $from, DateTimeImmutable $to): static
     {
         $this->loader->load($this->resource, $from, $to);
+        return $this;
     }
 
     /**

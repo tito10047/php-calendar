@@ -152,6 +152,7 @@ class CalendarTest extends TestCase
     {
         /** @var DayDataLoaderInterface&Stub $loader */
         $loader = $this->createStub(DayDataLoaderInterface::class);
+        $loader->method('load')->willReturnSelf();
         $loader->method('getData')->willReturnCallback(
             fn (DateTimeImmutable $date) => ['label' => $date->format('Y-m-d')]
         );
