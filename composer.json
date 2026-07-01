@@ -1,7 +1,28 @@
 {
     "name": "tito10047/php-calendar",
     "type": "library",
-    "description": "Php server side rendered calendar",
+    "description": "Framework-agnostic PHP calendar data library — monthly, weekly and work-week grids, RFC 5545 recurrence rules, iCal import/export, and resource scheduling.",
+    "keywords": [
+        "calendar",
+        "ical",
+        "icalendar",
+        "rfc5545",
+        "recurrence",
+        "rrule",
+        "schedule",
+        "event",
+        "date"
+    ],
+    "homepage": "https://mostka.sk",
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Jozef Môstka",
+            "email": "mostka.j@gmail.com",
+            "homepage": "https://mostka.sk",
+            "role": "Developer"
+        }
+    ],
     "minimum-stability": "stable",
     "require": {
         "php": ">=8.2"
