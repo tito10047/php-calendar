@@ -12,7 +12,7 @@ use Tito10047\Calendar\Recurrence\RecurrenceRule;
  * Minimal RFC 5545 iCal parser.
  *
  * Handles: VEVENT, RRULE, EXDATE, DTSTART, DTEND, DURATION, SUMMARY,
- * DESCRIPTION, LOCATION, UID.
+ * DESCRIPTION, LOCATION, URL, UID.
  * Timezone handling: TZID property on DTSTART/DTEND, VTIMEZONE blocks (UTC offset),
  * and UTC Z-suffix dates.
  *
@@ -247,6 +247,7 @@ final class ICalParser
             location: $this->firstValue($props, 'LOCATION'),
             rrule: $rrule,
             exDates: $exDates,
+            url: $this->firstValue($props, 'URL'),
         );
     }
 

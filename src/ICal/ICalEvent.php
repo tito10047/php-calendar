@@ -23,6 +23,7 @@ final class ICalEvent
         public readonly ?RecurrenceRule $rrule,
         /** @var list<DateTimeImmutable> */
         public readonly array $exDates = [],
+        public readonly ?string $url = null,
     ) {
     }
 
@@ -70,8 +71,11 @@ final class ICalEvent
             'summary'     => $this->summary,
             'description' => $this->description,
             'location'    => $this->location,
+            'url'         => $this->url,
             'dtStart'     => $this->dtStart->format('Y-m-d H:i:s'),
             'dtEnd'       => $this->dtEnd?->format('Y-m-d H:i:s'),
+            'rrule'       => $this->rrule?->toRruleString(),
+            'exDates'     => array_map(fn ($d) => $d->format('Y-m-d H:i:s'), $this->exDates),
         ];
     }
 }

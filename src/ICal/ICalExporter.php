@@ -52,6 +52,7 @@ final class ICalExporter
         ?string $description = null,
         ?string $location = null,
         ?string $uid = null,
+        ?string $url = null,
     ): self {
         $clone           = clone $this;
         $clone->events[] = new ICalEvent(
@@ -62,6 +63,7 @@ final class ICalExporter
             description: $description,
             location:    $location,
             rrule:       null,
+            url:         $url,
         );
         return $clone;
     }
@@ -73,6 +75,7 @@ final class ICalExporter
         ?string $description = null,
         ?string $location = null,
         ?string $uid = null,
+        ?string $url = null,
     ): self {
         $clone           = clone $this;
         $clone->events[] = new ICalEvent(
@@ -83,6 +86,7 @@ final class ICalExporter
             description: $description,
             location:    $location,
             rrule:       $rule,
+            url:         $url,
         );
         return $clone;
     }
@@ -123,6 +127,9 @@ final class ICalExporter
             }
             if ($event->location !== null) {
                 $lines[] = 'LOCATION:' . $this->escapeText($event->location);
+            }
+            if ($event->url !== null) {
+                $lines[] = 'URL:' . $event->url;
             }
             if ($event->rrule !== null) {
                 $lines[] = 'RRULE:' . $event->rrule->toRruleString();

@@ -236,4 +236,110 @@ class ICalTest extends TestCase
 
         $this->assertStringContainsString('SUMMARY:Meeting\; with\, special chars', $ics);
     }
+
+    public function testExportEventWithUrl(): void
+    {
+        $from = new DateTimeImmutable('2024-11-05T09:00:00Z');
+
+        $ics = (new ICalExporter())
+            ->addEvent(title: 'Meeting', from: $from, url: 'https://example.com/event/1')
+            ->export();
+
+        $this->assertStringContainsString('URL:https://example.com/event/1', $ics);
+    }
+
+    public function testExportRecurringEventWithUrl(): void
+    {
+        $rule  = RecurrenceRule::weekly()->onDays(DayName::Monday);
+        $start = new DateTimeImmutable('2024-11-04T09:00:00Z');
+
+        $ics = (new ICalExporter())
+            ->addRecurringEvent(title: 'Standup', rule: $rule, start: $start, url: 'https://example.com/standup')
+            ->export();
+
+        $this->assertStringContainsString('URL:https://example.com/standup', $ics);
+    }
+
+    public function testExportUrlIsNotTextEscaped(): void
+    {
+        // RFC 5545 §3.8.4.6: URL value type is URI, not TEXT — no backslash escaping
+        $from = new DateTimeImmutable('2024-11-05T09:00:00Z');
+
+        $ics = (new ICalExporter())
+            ->addEvent(title: 'Meeting', from: $from, url: 'https://example.com/path?a=1&b=2,3')
+            ->export();
+
+        $this->assertStringContainsString('URL:https://example.com/path?a=1&b=2,3', $ics);
+        $this->assertStringNotContainsString('URL:https://example.com/path?a=1&b=2\,3', $ics);
+    }
+
+    public function testExportWithoutUrlOmitsUrlLine(): void
+    {
+        $from = new DateTimeImmutable('2024-11-05T09:00:00Z');
+
+        $ics = (new ICalExporter())
+            ->addEvent(title: 'Meeting', from: $from)
+            ->export();
+
+        $this->assertStringNotContainsString('URL:', $ics);
+    }
+
+    public function testParserParsesUrl(): void
+    {
+        $ics = implode("\r\n", [
+            'BEGIN:VCALENDAR',
+            'VERSION:2.0',
+            'BEGIN:VEVENT',
+            'UID:url-001@test',
+            'DTSTART:20241105T090000Z',
+            'SUMMARY:Event with URL',
+            'URL:https://example.com/event/1',
+            'END:VEVENT',
+            'END:VCALENDAR',
+            '',
+        ]);
+
+        $events = (new ICalParser())->parseString($ics);
+
+        $this->assertCount(1, $events);
+        $this->assertSame('https://example.com/event/1', $events[0]->url);
+    }
+
+    public function testParserEventWithoutUrlHasNullUrl(): void
+    {
+        $parser = new ICalParser();
+        $events = $parser->parseString($this->sampleIcs());
+
+        $this->assertNull($events[0]->url);
+    }
+
+    public function testUrlRoundTrip(): void
+    {
+        $from = new DateTimeImmutable('2024-11-05T09:00:00Z');
+        $url  = 'https://example.com/event/42';
+
+        $ics = (new ICalExporter())
+            ->addEvent(title: 'Round-trip URL', from: $from, uid: 'rt-url@test', url: $url)
+            ->export();
+
+        $events = (new ICalParser())->parseString($ics);
+
+        $this->assertCount(1, $events);
+        $this->assertSame($url, $events[0]->url);
+    }
+
+    public function testICalEventToArrayIncludesUrl(): void
+    {
+        $from  = new DateTimeImmutable('2024-11-05T09:00:00Z');
+        $url   = 'https://example.com/event/1';
+
+        $ics    = (new ICalExporter())
+            ->addEvent(title: 'Meeting', from: $from, uid: 'arr-url@test', url: $url)
+            ->export();
+        $events = (new ICalParser())->parseString($ics);
+
+        $arr = $events[0]->toArray();
+        $this->assertArrayHasKey('url', $arr);
+        $this->assertSame($url, $arr['url']);
+    }
 }
