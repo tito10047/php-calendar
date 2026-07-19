@@ -54,6 +54,42 @@ final class ICalParser
     }
 
     /**
+     * @return list<ICalTodo>
+     */
+    public function parseTodos(string $icsContent): array
+    {
+        $lines = $this->unfold($icsContent);
+        $tzMap = $this->parseTzMap($lines);
+        $todos = [];
+
+        $inTodo     = false;
+        $properties = [];
+
+        foreach ($lines as $line) {
+            $line = rtrim($line, "\r\n");
+
+            if ($line === 'BEGIN:VTODO') {
+                $inTodo     = true;
+                $properties = [];
+                continue;
+            }
+
+            if ($line === 'END:VTODO') {
+                $inTodo = false;
+                $todos[] = $this->buildTodo($properties, $tzMap);
+                continue;
+            }
+
+            if ($inTodo) {
+                [$name, $params, $value] = $this->parseLine($line);
+                $properties[$name][] = ['params' => $params, 'value' => $value];
+            }
+        }
+
+        return $todos;
+    }
+
+    /**
      * @return list<ICalEvent>
      */
     public function parseString(string $icsContent): array
@@ -63,7 +99,11 @@ final class ICalParser
         $events = [];
 
         $inEvent    = false;
+        $inAlarm    = false;
         $properties = [];
+        $alarmProps = [];
+        /** @var list<VAlarm> $alarms */
+        $alarms     = [];
 
         foreach ($lines as $line) {
             $line = rtrim($line, "\r\n");
@@ -71,19 +111,38 @@ final class ICalParser
             if ($line === 'BEGIN:VEVENT') {
                 $inEvent    = true;
                 $properties = [];
+                $alarms     = [];
                 continue;
             }
 
             if ($line === 'END:VEVENT') {
                 $inEvent = false;
-                $event   = $this->buildEvent($properties, $tzMap);
+                $event   = $this->buildEvent($properties, $tzMap, $alarms);
                 if ($event !== null) {
                     $events[] = $event;
                 }
                 continue;
             }
 
-            if ($inEvent) {
+            if ($inEvent && $line === 'BEGIN:VALARM') {
+                $inAlarm    = true;
+                $alarmProps = [];
+                continue;
+            }
+
+            if ($inEvent && $line === 'END:VALARM') {
+                $inAlarm = false;
+                $alarm   = $this->buildAlarm($alarmProps);
+                if ($alarm !== null) {
+                    $alarms[] = $alarm;
+                }
+                continue;
+            }
+
+            if ($inAlarm) {
+                [$name, $params, $value] = $this->parseLine($line);
+                $alarmProps[$name][] = ['params' => $params, 'value' => $value];
+            } elseif ($inEvent) {
                 [$name, $params, $value] = $this->parseLine($line);
                 $properties[$name][] = ['params' => $params, 'value' => $value];
             }
@@ -194,9 +253,10 @@ final class ICalParser
 
     /**
      * @param array<string, list<array{params: array<string,string>, value: string}>> $props
-     * @param array<string, DateTimeZone> $tzMap
+     * @param array<string, DateTimeZone>                                             $tzMap
+     * @param list<VAlarm>                                                            $alarms
      */
-    private function buildEvent(array $props, array $tzMap): ?ICalEvent
+    private function buildEvent(array $props, array $tzMap, array $alarms = []): ?ICalEvent
     {
         $uid = $this->firstValue($props, 'UID') ?? uniqid('event_', true);
 
@@ -233,6 +293,25 @@ final class ICalParser
                         }
                     }
                 }
+                // Incorporate RDATE explicit occurrence dates
+                if (isset($props['RDATE'])) {
+                    $rDates = [];
+                    foreach ($props['RDATE'] as $rdEntry) {
+                        foreach (explode(',', $rdEntry['value']) as $rawDate) {
+                            $rawDate = trim($rawDate);
+                            if ($rawDate === '') {
+                                continue;
+                            }
+                            $rDate = $this->parseDateTime($rawDate, $rdEntry['params'], $tzMap);
+                            if ($rDate !== null) {
+                                $rDates[] = $rDate;
+                            }
+                        }
+                    }
+                    if ($rDates !== []) {
+                        $rule = $rule->withExtraDates(...$rDates);
+                    }
+                }
                 $rrule = $rule;
             } catch (\InvalidArgumentException) {
                 // Malformed RRULE — treat as non-recurring
@@ -254,19 +333,45 @@ final class ICalParser
         $statusRaw = $this->firstValue($props, 'STATUS');
         $status    = $statusRaw !== null ? EventStatus::tryFrom(strtoupper($statusRaw)) : null;
 
+        $organizerEmail = null;
+        $organizerName  = null;
+        if (isset($props['ORGANIZER'])) {
+            $org   = $props['ORGANIZER'][0];
+            $val   = $org['value'];
+            $organizerEmail = str_starts_with(strtolower($val), 'mailto:') ? substr($val, 7) : $val;
+            $organizerName  = $org['params']['CN'] ?? null;
+        }
+
+        $attendees = [];
+        if (isset($props['ATTENDEE'])) {
+            foreach ($props['ATTENDEE'] as $att) {
+                $val      = $att['value'];
+                $email    = str_starts_with(strtolower($val), 'mailto:') ? substr($val, 7) : $val;
+                $name     = $att['params']['CN'] ?? null;
+                $role     = $att['params']['ROLE'] ?? 'REQ-PARTICIPANT';
+                $partStat = $att['params']['PARTSTAT'] ?? 'NEEDS-ACTION';
+                $rsvp     = strtoupper($att['params']['RSVP'] ?? '') === 'TRUE';
+                $attendees[] = new Attendee($email, $name, $role, $partStat, $rsvp);
+            }
+        }
+
         return new ICalEvent(
-            uid: $uid,
-            dtStart: $dtStart,
-            dtEnd: $dtEnd,
-            summary: $this->firstValue($props, 'SUMMARY'),
-            description: $this->firstValue($props, 'DESCRIPTION'),
-            location: $this->firstValue($props, 'LOCATION'),
-            rrule: $rrule,
-            exDates: $exDates,
-            url: $this->firstValue($props, 'URL'),
-            color: $this->firstValue($props, 'COLOR'),
-            categories: $categories,
-            status: $status,
+            uid:           $uid,
+            dtStart:       $dtStart,
+            dtEnd:         $dtEnd,
+            summary:       $this->firstValue($props, 'SUMMARY'),
+            description:   $this->firstValue($props, 'DESCRIPTION'),
+            location:      $this->firstValue($props, 'LOCATION'),
+            rrule:         $rrule,
+            exDates:       $exDates,
+            url:           $this->firstValue($props, 'URL'),
+            color:         $this->firstValue($props, 'COLOR'),
+            categories:    $categories,
+            status:        $status,
+            alarms:        $alarms,
+            organizer:     $organizerEmail,
+            organizerName: $organizerName,
+            attendees:     $attendees,
         );
     }
 
@@ -326,6 +431,55 @@ final class ICalParser
         } catch (\Exception) {
             return new DateTimeZone('UTC');
         }
+    }
+
+    /**
+     * @param array<string, list<array{params: array<string,string>, value: string}>> $props
+     * @param array<string, DateTimeZone>                                             $tzMap
+     */
+    private function buildTodo(array $props, array $tzMap): ICalTodo
+    {
+        $uid = $this->firstValue($props, 'UID') ?? uniqid('todo_', true);
+
+        $due     = null;
+        $dtStart = null;
+        if (isset($props['DUE'])) {
+            $e   = $props['DUE'][0];
+            $due = $this->parseDateTime($e['value'], $e['params'], $tzMap);
+        }
+        if (isset($props['DTSTART'])) {
+            $e       = $props['DTSTART'][0];
+            $dtStart = $this->parseDateTime($e['value'], $e['params'], $tzMap);
+        }
+
+        return new ICalTodo(
+            uid:             $uid,
+            summary:         $this->firstValue($props, 'SUMMARY'),
+            description:     $this->firstValue($props, 'DESCRIPTION'),
+            due:             $due,
+            dtStart:         $dtStart,
+            status:          $this->firstValue($props, 'STATUS') ?? 'NEEDS-ACTION',
+            priority:        (int) ($this->firstValue($props, 'PRIORITY') ?? 0),
+            percentComplete: (int) ($this->firstValue($props, 'PERCENT-COMPLETE') ?? 0),
+        );
+    }
+
+    /**
+     * @param array<string, list<array{params: array<string,string>, value: string}>> $props
+     */
+    private function buildAlarm(array $props): ?VAlarm
+    {
+        $action  = $this->firstValue($props, 'ACTION');
+        $trigger = $this->firstValue($props, 'TRIGGER');
+        if ($action === null || $trigger === null) {
+            return null;
+        }
+        return new VAlarm(
+            action:      strtoupper($action),
+            trigger:     $trigger,
+            description: $this->firstValue($props, 'DESCRIPTION'),
+            summary:     $this->firstValue($props, 'SUMMARY'),
+        );
     }
 
     /**

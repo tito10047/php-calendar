@@ -6,6 +6,7 @@ namespace Tito10047\Calendar;
 
 use DateTimeImmutable;
 use Tito10047\Calendar\DataLoader\ArrayDataLoader;
+use Tito10047\Calendar\DataLoader\DateRangeGenerator;
 use Tito10047\Calendar\Enum\CalendarType;
 use Tito10047\Calendar\Enum\DayName;
 use Tito10047\Calendar\Enum\WeekStart;
@@ -68,6 +69,19 @@ final class Calendar implements CalendarInterface
         return new self(
             date: new DateTimeImmutable('today'),
             daysGenerator: $type,
+            startDay: $startDay,
+        );
+    }
+
+    /** Arbitrary date range — not constrained to a month or week boundary. */
+    public static function fromDateRange(
+        DateTimeImmutable $from,
+        DateTimeImmutable $to,
+        WeekStart $startDay = WeekStart::Monday,
+    ): self {
+        return new self(
+            date: $from,
+            daysGenerator: new DateRangeGenerator($from, $to),
             startDay: $startDay,
         );
     }

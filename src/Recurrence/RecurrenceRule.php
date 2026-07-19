@@ -11,6 +11,7 @@ use Tito10047\Calendar\Enum\DayName;
  * Immutable value object representing an RFC 5545 RRULE.
  *
  * Supported rule parts: FREQ, INTERVAL, COUNT, UNTIL, BYDAY, BYMONTH, BYMONTHDAY, BYSETPOS.
+ * Additionally supports RDATE (extra explicit dates merged into expand output).
  */
 final class RecurrenceRule
 {
@@ -32,6 +33,9 @@ final class RecurrenceRule
     /** @var list<int>|null BYSETPOS position numbers (positive = from start, negative = from end) */
     private readonly ?array $bySetPos;
 
+    /** @var list<string> RDATE extra explicit occurrence dates in Y-m-d format */
+    private readonly array $rDates;
+
     /**
      * @param list<DayName>            $byDay
      * @param array<int, DayName>|null $byNthWeekday
@@ -39,6 +43,7 @@ final class RecurrenceRule
      * @param list<int>|null           $byMonthDay
      * @param list<string>             $exDates
      * @param list<int>|null           $bySetPos
+     * @param list<string>             $rDates
      */
     private function __construct(
         private readonly Frequency $frequency,
@@ -51,6 +56,7 @@ final class RecurrenceRule
         ?array $byMonthDay,
         array $exDates,
         ?array $bySetPos = null,
+        array $rDates = [],
     ) {
         $this->byDay        = $byDay;
         $this->byNthWeekday = $byNthWeekday;
@@ -58,6 +64,7 @@ final class RecurrenceRule
         $this->byMonthDay   = $byMonthDay;
         $this->exDates      = $exDates;
         $this->bySetPos     = $bySetPos;
+        $this->rDates       = $rDates;
     }
 
     // -------------------------------------------------------------------------
@@ -161,6 +168,7 @@ final class RecurrenceRule
             $this->byMonthDay,
             $this->exDates,
             $this->bySetPos,
+            $this->rDates,
         );
     }
 
@@ -177,6 +185,7 @@ final class RecurrenceRule
             $this->byMonthDay,
             $this->exDates,
             $this->bySetPos,
+            $this->rDates,
         );
     }
 
@@ -193,6 +202,7 @@ final class RecurrenceRule
             $this->byMonthDay,
             $this->exDates,
             $this->bySetPos,
+            $this->rDates,
         );
     }
 
@@ -212,6 +222,7 @@ final class RecurrenceRule
             $this->byMonthDay,
             $this->exDates,
             $this->bySetPos,
+            $this->rDates,
         );
     }
 
@@ -228,6 +239,7 @@ final class RecurrenceRule
             $this->byMonthDay,
             $this->exDates,
             $this->bySetPos,
+            $this->rDates,
         );
     }
 
@@ -248,6 +260,7 @@ final class RecurrenceRule
             $this->byMonthDay,
             array_values(array_unique($exDates)),
             $this->bySetPos,
+            $this->rDates,
         );
     }
 
@@ -265,6 +278,7 @@ final class RecurrenceRule
             $this->byMonthDay,
             $this->exDates,
             $this->bySetPos,
+            $this->rDates,
         );
     }
 
@@ -290,6 +304,7 @@ final class RecurrenceRule
             array_values($days),
             $this->exDates,
             $this->bySetPos,
+            $this->rDates,
         );
     }
 
@@ -315,6 +330,32 @@ final class RecurrenceRule
             $this->byMonthDay,
             $this->exDates,
             array_values($positions),
+            $this->rDates,
+        );
+    }
+
+    /**
+     * Add explicit extra dates (RDATE) that are always included in the expansion,
+     * regardless of the RRULE pattern.
+     */
+    public function withExtraDates(DateTimeImmutable ...$dates): self
+    {
+        $rDates = $this->rDates;
+        foreach ($dates as $d) {
+            $rDates[] = $d->format('Y-m-d');
+        }
+        return new self(
+            $this->frequency,
+            $this->interval,
+            $this->count,
+            $this->until,
+            $this->byDay,
+            $this->byNthWeekday,
+            $this->byMonth,
+            $this->byMonthDay,
+            $this->exDates,
+            $this->bySetPos,
+            array_values(array_unique($rDates)),
         );
     }
 
@@ -331,6 +372,20 @@ final class RecurrenceRule
 
         $candidates = $this->generateCandidates($from, $to);
 
+        // Merge RDATE extra dates (not subject to COUNT/UNTIL — they are always included)
+        $rDateExtras = [];
+        foreach ($this->rDates as $rDate) {
+            if (!isset($exSet[$rDate])) {
+                $dt = DateTimeImmutable::createFromFormat('Y-m-d', $rDate);
+                if ($dt !== false) {
+                    $dt = $dt->setTime(0, 0, 0);
+                    if ($dt >= $from && $dt <= $to) {
+                        $rDateExtras[$rDate] = $dt;
+                    }
+                }
+            }
+        }
+
         $results  = [];
         $hitCount = 0;
         foreach ($candidates as $date) {
@@ -338,6 +393,8 @@ final class RecurrenceRule
                 continue;
             }
             if ($date >= $from && $date <= $to) {
+                $key = $date->format('Y-m-d');
+                unset($rDateExtras[$key]); // avoid duplicates
                 $results[] = $date->setTime(0, 0, 0);
             }
             $hitCount++;
@@ -345,6 +402,13 @@ final class RecurrenceRule
                 break;
             }
         }
+
+        // Append remaining RDATEs (not already covered by RRULE expansion)
+        foreach ($rDateExtras as $dt) {
+            $results[] = $dt;
+        }
+
+        usort($results, fn ($a, $b) => $a <=> $b);
 
         return $results;
     }
@@ -441,6 +505,12 @@ final class RecurrenceRule
     public function getBySetPos(): ?array
     {
         return $this->bySetPos;
+    }
+
+    /** @return list<string> Extra explicit occurrence dates in Y-m-d format. */
+    public function getRDates(): array
+    {
+        return $this->rDates;
     }
 
     // -------------------------------------------------------------------------

@@ -162,6 +162,22 @@ final class ICalExporter
             if ($event->rrule !== null) {
                 $lines[] = 'RRULE:' . $event->rrule->toRruleString();
             }
+            if ($event->organizer !== null) {
+                $orgLine = 'ORGANIZER';
+                if ($event->organizerName !== null) {
+                    $orgLine .= ';CN=' . $event->organizerName;
+                }
+                $orgLine .= ':mailto:' . $event->organizer;
+                $lines[] = $orgLine;
+            }
+            foreach ($event->attendees as $attendee) {
+                $lines[] = $attendee->toIcalLine();
+            }
+            foreach ($event->alarms as $alarm) {
+                foreach (explode("\r\n", $alarm->toIcalLines()) as $alarmLine) {
+                    $lines[] = $alarmLine;
+                }
+            }
 
             $lines[] = 'END:VEVENT';
         }
