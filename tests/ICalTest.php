@@ -9,7 +9,9 @@ use PHPUnit\Framework\TestCase;
 use Tito10047\Calendar\Calendar;
 use Tito10047\Calendar\Enum\CalendarType;
 use Tito10047\Calendar\Enum\DayName;
+use Tito10047\Calendar\Enum\EventStatus;
 use Tito10047\Calendar\ICal\ICalDataLoader;
+use Tito10047\Calendar\ICal\ICalEvent;
 use Tito10047\Calendar\ICal\ICalExporter;
 use Tito10047\Calendar\ICal\ICalParser;
 use Tito10047\Calendar\Recurrence\RecurrenceRule;
@@ -341,5 +343,119 @@ class ICalTest extends TestCase
         $arr = $events[0]->toArray();
         $this->assertArrayHasKey('url', $arr);
         $this->assertSame($url, $arr['url']);
+    }
+
+    // -------------------------------------------------------------------------
+    // COLOR, CATEGORIES, STATUS
+    // -------------------------------------------------------------------------
+
+    public function testColorRoundTrip(): void
+    {
+        $from = new DateTimeImmutable('2025-06-01T10:00:00Z');
+        $ics  = (new ICalExporter())
+            ->addEvent(title: 'Dovolenka', from: $from, uid: 'color-1@test', color: '#e74c3c')
+            ->export();
+
+        $events = (new ICalParser())->parseString($ics);
+        $this->assertSame('#e74c3c', $events[0]->color);
+    }
+
+    public function testCategoriesRoundTrip(): void
+    {
+        $from = new DateTimeImmutable('2025-06-01T10:00:00Z');
+        $ics  = (new ICalExporter())
+            ->addEvent(title: 'Meeting', from: $from, uid: 'cat-1@test', categories: ['Osobné', 'Voľno'])
+            ->export();
+
+        $events = (new ICalParser())->parseString($ics);
+        $this->assertSame(['Osobné', 'Voľno'], $events[0]->categories);
+    }
+
+    public function testStatusRoundTrip(): void
+    {
+        $from = new DateTimeImmutable('2025-06-01T10:00:00Z');
+        $ics  = (new ICalExporter())
+            ->addEvent(title: 'Tentative', from: $from, uid: 'status-1@test', status: EventStatus::Tentative)
+            ->export();
+
+        $events = (new ICalParser())->parseString($ics);
+        $this->assertSame(EventStatus::Tentative, $events[0]->status);
+    }
+
+    public function testAllThreeFieldsParsedFromIcs(): void
+    {
+        $ics = implode("\r\n", [
+            'BEGIN:VCALENDAR',
+            'VERSION:2.0',
+            'PRODID:-//Test//Test//EN',
+            'BEGIN:VEVENT',
+            'UID:rich-event@test',
+            'DTSTART:20250601T100000Z',
+            'DTEND:20250601T110000Z',
+            'SUMMARY:Rich event',
+            'COLOR:#3498db',
+            'CATEGORIES:Work,Important',
+            'STATUS:CONFIRMED',
+            'END:VEVENT',
+            'END:VCALENDAR',
+        ]);
+
+        $events = (new ICalParser())->parseString($ics);
+        $this->assertCount(1, $events);
+        $this->assertSame('#3498db', $events[0]->color);
+        $this->assertSame(['Work', 'Important'], $events[0]->categories);
+        $this->assertSame(EventStatus::Confirmed, $events[0]->status);
+    }
+
+    public function testToArrayIncludesColorCategoriesStatus(): void
+    {
+        $event = new ICalEvent(
+            uid:        'arr-test@test',
+            dtStart:    new DateTimeImmutable('2025-06-01T10:00:00Z'),
+            dtEnd:      null,
+            summary:    'Test',
+            description: null,
+            location:   null,
+            rrule:      null,
+            color:      '#ff0000',
+            categories: ['A', 'B'],
+            status:     EventStatus::Cancelled,
+        );
+
+        $arr = $event->toArray();
+        $this->assertSame('#ff0000', $arr['color']);
+        $this->assertSame(['A', 'B'], $arr['categories']);
+        $this->assertSame('CANCELLED', $arr['status']);
+    }
+
+    public function testUnknownStatusIgnored(): void
+    {
+        $ics = implode("\r\n", [
+            'BEGIN:VCALENDAR',
+            'VERSION:2.0',
+            'PRODID:-//Test//Test//EN',
+            'BEGIN:VEVENT',
+            'UID:unknown-status@test',
+            'DTSTART:20250601T100000Z',
+            'SUMMARY:Test',
+            'STATUS:UNKNOWN_VALUE',
+            'END:VEVENT',
+            'END:VCALENDAR',
+        ]);
+
+        $events = (new ICalParser())->parseString($ics);
+        $this->assertNull($events[0]->status);
+    }
+
+    public function testExporterWithNullColorCategoriesStatus(): void
+    {
+        $from = new DateTimeImmutable('2025-06-01T10:00:00Z');
+        $ics  = (new ICalExporter())
+            ->addEvent(title: 'Plain', from: $from, uid: 'plain@test')
+            ->export();
+
+        $this->assertStringNotContainsString('COLOR:', $ics);
+        $this->assertStringNotContainsString('CATEGORIES:', $ics);
+        $this->assertStringNotContainsString('STATUS:', $ics);
     }
 }

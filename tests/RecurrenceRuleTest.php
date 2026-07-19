@@ -351,4 +351,139 @@ class RecurrenceRuleTest extends TestCase
         $rule     = RecurrenceRule::fromRrule($original);
         $this->assertSame($original, $rule->toRruleString());
     }
+
+    // -------------------------------------------------------------------------
+    // BYSETPOS
+    // -------------------------------------------------------------------------
+
+    public function testBySetPosLastWorkdayOfMonth(): void
+    {
+        // FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=-1 → last workday each month
+        $rule = RecurrenceRule::monthly()
+            ->onDays(DayName::Monday, DayName::Tuesday, DayName::Wednesday, DayName::Thursday, DayName::Friday)
+            ->bySetPos(-1);
+
+        $dates = $this->format($rule->expand(
+            new DateTimeImmutable('2025-01-01'),
+            new DateTimeImmutable('2025-03-31'),
+        ));
+
+        // Jan 2025: last workday = Fri Jan 31
+        // Feb 2025: last workday = Fri Feb 28
+        // Mar 2025: last workday = Mon Mar 31
+        $this->assertSame(['2025-01-31', '2025-02-28', '2025-03-31'], $dates);
+    }
+
+    public function testBySetPosFirstWorkdayOfMonth(): void
+    {
+        // FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=1 → first workday each month
+        $rule = RecurrenceRule::monthly()
+            ->onDays(DayName::Monday, DayName::Tuesday, DayName::Wednesday, DayName::Thursday, DayName::Friday)
+            ->bySetPos(1);
+
+        $dates = $this->format($rule->expand(
+            new DateTimeImmutable('2025-01-01'),
+            new DateTimeImmutable('2025-03-31'),
+        ));
+
+        // Jan 2025: first workday = Wed Jan 1
+        // Feb 2025: first workday = Sat → Mon Feb 3
+        // Mar 2025: first workday = Sat → Mon Mar 3
+        $this->assertSame(['2025-01-01', '2025-02-03', '2025-03-03'], $dates);
+    }
+
+    public function testBySetPosSecondThursdayOfMonth(): void
+    {
+        // FREQ=MONTHLY;BYDAY=TH;BYSETPOS=2 → second Thursday each month
+        $rule = RecurrenceRule::monthly()
+            ->onDays(DayName::Thursday)
+            ->bySetPos(2);
+
+        $dates = $this->format($rule->expand(
+            new DateTimeImmutable('2025-01-01'),
+            new DateTimeImmutable('2025-03-31'),
+        ));
+
+        // Jan: 2nd Thu = Jan 9
+        // Feb: 2nd Thu = Feb 13
+        // Mar: 2nd Thu = Mar 13
+        $this->assertSame(['2025-01-09', '2025-02-13', '2025-03-13'], $dates);
+    }
+
+    public function testBySetPosFromRruleParsing(): void
+    {
+        $rule = RecurrenceRule::fromRrule('FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=-1');
+        $this->assertSame([-1], $rule->getBySetPos());
+
+        $dates = $this->format($rule->expand(
+            new DateTimeImmutable('2025-01-01'),
+            new DateTimeImmutable('2025-01-31'),
+        ));
+        $this->assertSame(['2025-01-31'], $dates);
+    }
+
+    public function testBySetPosRoundTrip(): void
+    {
+        $original = 'FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=-1';
+        $rule     = RecurrenceRule::fromRrule($original);
+        $this->assertSame($original, $rule->toRruleString());
+    }
+
+    public function testBySetPosWeekly(): void
+    {
+        // FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=-1 → last workday of each week (Friday)
+        $rule = RecurrenceRule::weekly()
+            ->onDays(DayName::Monday, DayName::Tuesday, DayName::Wednesday, DayName::Thursday, DayName::Friday)
+            ->bySetPos(-1);
+
+        $dates = $this->format($rule->expand(
+            new DateTimeImmutable('2025-01-01'),
+            new DateTimeImmutable('2025-01-21'),
+        ));
+
+        // Week of Dec 30: Fri Jan 3
+        // Week of Jan 6:  Fri Jan 10
+        // Week of Jan 13: Fri Jan 17
+        // Week of Jan 20: Mon..Fri — Fri Jan 24 (outside range) → only up to Jan 21
+        $this->assertSame(['2025-01-03', '2025-01-10', '2025-01-17'], $dates);
+    }
+
+    public function testBySetPosMultiplePositions(): void
+    {
+        // FREQ=MONTHLY;BYDAY=MO;BYSETPOS=1,-1 → first and last Monday of each month
+        $rule = RecurrenceRule::monthly()
+            ->onDays(DayName::Monday)
+            ->bySetPos(1, -1);
+
+        $dates = $this->format($rule->expand(
+            new DateTimeImmutable('2025-02-01'),
+            new DateTimeImmutable('2025-02-28'),
+        ));
+
+        // Feb 2025 Mondays: 3, 10, 17, 24 → first=3, last=24
+        $this->assertSame(['2025-02-03', '2025-02-24'], $dates);
+    }
+
+    public function testBySetPosZeroThrowsException(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+        RecurrenceRule::monthly()->bySetPos(0);
+    }
+
+    public function testBySetPosGetterReturnsNull(): void
+    {
+        $rule = RecurrenceRule::monthly()->onDays(DayName::Monday);
+        $this->assertNull($rule->getBySetPos());
+    }
+
+    public function testBySetPosPreservedThroughWithers(): void
+    {
+        $rule = RecurrenceRule::monthly()
+            ->onDays(DayName::Monday)
+            ->bySetPos(-1)
+            ->limitTo(3);
+
+        $this->assertSame([-1], $rule->getBySetPos());
+        $this->assertSame(3, $rule->getCount());
+    }
 }

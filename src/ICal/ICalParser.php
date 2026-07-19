@@ -6,6 +6,7 @@ namespace Tito10047\Calendar\ICal;
 
 use DateTimeImmutable;
 use DateTimeZone;
+use Tito10047\Calendar\Enum\EventStatus;
 use Tito10047\Calendar\Recurrence\RecurrenceRule;
 
 /**
@@ -238,6 +239,21 @@ final class ICalParser
             }
         }
 
+        $categories = [];
+        if (isset($props['CATEGORIES'])) {
+            foreach ($props['CATEGORIES'] as $catEntry) {
+                foreach (explode(',', $catEntry['value']) as $cat) {
+                    $cat = trim($cat);
+                    if ($cat !== '') {
+                        $categories[] = $cat;
+                    }
+                }
+            }
+        }
+
+        $statusRaw = $this->firstValue($props, 'STATUS');
+        $status    = $statusRaw !== null ? EventStatus::tryFrom(strtoupper($statusRaw)) : null;
+
         return new ICalEvent(
             uid: $uid,
             dtStart: $dtStart,
@@ -248,6 +264,9 @@ final class ICalParser
             rrule: $rrule,
             exDates: $exDates,
             url: $this->firstValue($props, 'URL'),
+            color: $this->firstValue($props, 'COLOR'),
+            categories: $categories,
+            status: $status,
         );
     }
 

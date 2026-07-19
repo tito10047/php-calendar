@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tito10047\Calendar\ICal;
 
 use DateTimeImmutable;
+use Tito10047\Calendar\Enum\EventStatus;
 use Tito10047\Calendar\Recurrence\RecurrenceRule;
 
 /**
@@ -13,6 +14,10 @@ use Tito10047\Calendar\Recurrence\RecurrenceRule;
  */
 final class ICalEvent
 {
+    /**
+     * @param list<DateTimeImmutable> $exDates
+     * @param list<string>            $categories
+     */
     public function __construct(
         public readonly string $uid,
         public readonly DateTimeImmutable $dtStart,
@@ -21,9 +26,11 @@ final class ICalEvent
         public readonly ?string $description,
         public readonly ?string $location,
         public readonly ?RecurrenceRule $rrule,
-        /** @var list<DateTimeImmutable> */
         public readonly array $exDates = [],
         public readonly ?string $url = null,
+        public readonly ?string $color = null,
+        public readonly array $categories = [],
+        public readonly ?EventStatus $status = null,
     ) {
     }
 
@@ -72,6 +79,9 @@ final class ICalEvent
             'description' => $this->description,
             'location'    => $this->location,
             'url'         => $this->url,
+            'color'       => $this->color,
+            'categories'  => $this->categories,
+            'status'      => $this->status?->value,
             'dtStart'     => $this->dtStart->format('Y-m-d H:i:s'),
             'dtEnd'       => $this->dtEnd?->format('Y-m-d H:i:s'),
             'rrule'       => $this->rrule?->toRruleString(),

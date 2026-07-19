@@ -29,12 +29,16 @@ final class RecurrenceRule
     /** @var list<string> EXDATE exclusion dates in Y-m-d format */
     private readonly array $exDates;
 
+    /** @var list<int>|null BYSETPOS position numbers (positive = from start, negative = from end) */
+    private readonly ?array $bySetPos;
+
     /**
      * @param list<DayName>            $byDay
      * @param array<int, DayName>|null $byNthWeekday
      * @param list<int>|null           $byMonth
      * @param list<int>|null           $byMonthDay
      * @param list<string>             $exDates
+     * @param list<int>|null           $bySetPos
      */
     private function __construct(
         private readonly Frequency $frequency,
@@ -46,12 +50,14 @@ final class RecurrenceRule
         ?array $byMonth,
         ?array $byMonthDay,
         array $exDates,
+        ?array $bySetPos = null,
     ) {
         $this->byDay        = $byDay;
         $this->byNthWeekday = $byNthWeekday;
         $this->byMonth      = $byMonth;
         $this->byMonthDay   = $byMonthDay;
         $this->exDates      = $exDates;
+        $this->bySetPos     = $bySetPos;
     }
 
     // -------------------------------------------------------------------------
@@ -125,7 +131,17 @@ final class RecurrenceRule
             }
         }
 
-        return new self($frequency, $interval, $count, $until, $byDay, $byNthWeekday, $byMonth, $byMonthDay, []);
+        $bySetPos = null;
+        if (isset($parts['BYSETPOS'])) {
+            $bySetPos = array_map('intval', explode(',', $parts['BYSETPOS']));
+            foreach ($bySetPos as $pos) {
+                if ($pos === 0 || $pos < -366 || $pos > 366) {
+                    throw new \InvalidArgumentException("BYSETPOS value must be non-zero and in range -366..366, got {$pos}");
+                }
+            }
+        }
+
+        return new self($frequency, $interval, $count, $until, $byDay, $byNthWeekday, $byMonth, $byMonthDay, [], $bySetPos);
     }
 
     // -------------------------------------------------------------------------
@@ -144,6 +160,7 @@ final class RecurrenceRule
             $this->byMonth,
             $this->byMonthDay,
             $this->exDates,
+            $this->bySetPos,
         );
     }
 
@@ -159,6 +176,7 @@ final class RecurrenceRule
             $this->byMonth,
             $this->byMonthDay,
             $this->exDates,
+            $this->bySetPos,
         );
     }
 
@@ -174,6 +192,7 @@ final class RecurrenceRule
             $this->byMonth,
             $this->byMonthDay,
             $this->exDates,
+            $this->bySetPos,
         );
     }
 
@@ -192,6 +211,7 @@ final class RecurrenceRule
             $this->byMonth,
             $this->byMonthDay,
             $this->exDates,
+            $this->bySetPos,
         );
     }
 
@@ -207,6 +227,7 @@ final class RecurrenceRule
             $this->byMonth,
             $this->byMonthDay,
             $this->exDates,
+            $this->bySetPos,
         );
     }
 
@@ -226,6 +247,7 @@ final class RecurrenceRule
             $this->byMonth,
             $this->byMonthDay,
             array_values(array_unique($exDates)),
+            $this->bySetPos,
         );
     }
 
@@ -242,6 +264,7 @@ final class RecurrenceRule
             array_values($months),
             $this->byMonthDay,
             $this->exDates,
+            $this->bySetPos,
         );
     }
 
@@ -266,6 +289,32 @@ final class RecurrenceRule
             $this->byMonth,
             array_values($days),
             $this->exDates,
+            $this->bySetPos,
+        );
+    }
+
+    /**
+     * Set BYSETPOS constraint — selects the N-th occurrence(s) from the per-period candidate set.
+     * Positive positions count from the start (1 = first), negative from the end (-1 = last).
+     */
+    public function bySetPos(int ...$positions): self
+    {
+        foreach ($positions as $pos) {
+            if ($pos === 0 || $pos < -366 || $pos > 366) {
+                throw new \InvalidArgumentException("BYSETPOS value must be non-zero and in range -366..366, got {$pos}");
+            }
+        }
+        return new self(
+            $this->frequency,
+            $this->interval,
+            $this->count,
+            $this->until,
+            $this->byDay,
+            $this->byNthWeekday,
+            $this->byMonth,
+            $this->byMonthDay,
+            $this->exDates,
+            array_values($positions),
         );
     }
 
@@ -336,6 +385,9 @@ final class RecurrenceRule
         if ($this->byMonthDay !== null) {
             $parts[] = 'BYMONTHDAY=' . implode(',', $this->byMonthDay);
         }
+        if ($this->bySetPos !== null) {
+            $parts[] = 'BYSETPOS=' . implode(',', $this->bySetPos);
+        }
 
         return implode(';', $parts);
     }
@@ -383,6 +435,12 @@ final class RecurrenceRule
     public function getByMonthDay(): ?array
     {
         return $this->byMonthDay;
+    }
+
+    /** @return list<int>|null */
+    public function getBySetPos(): ?array
+    {
+        return $this->bySetPos;
     }
 
     // -------------------------------------------------------------------------
@@ -433,15 +491,23 @@ final class RecurrenceRule
         $hits       = 0;
 
         while ($weekStart <= $to) {
+            $weekCandidates = [];
             foreach ($targetDays as $dayName) {
                 $candidate = $weekStart->modify(strtolower($dayName->name) . ' this week')->setTime(0, 0, 0);
-                if ($candidate < $from || $candidate > $to) {
-                    continue;
-                }
                 if (!$this->matchesByMonth($candidate) || !$this->matchesByMonthDay($candidate)) {
                     continue;
                 }
                 if ($this->until !== null && $candidate > $this->until) {
+                    continue;
+                }
+                $weekCandidates[] = $candidate;
+            }
+
+            usort($weekCandidates, fn ($a, $b) => $a <=> $b);
+            $weekCandidates = $this->applyBySetPos($weekCandidates);
+
+            foreach ($weekCandidates as $candidate) {
+                if ($candidate < $from || $candidate > $to) {
                     continue;
                 }
                 $results[] = $candidate;
@@ -450,6 +516,7 @@ final class RecurrenceRule
                     return $results;
                 }
             }
+
             $weekStart = $weekStart->modify('+' . $this->interval . ' weeks');
         }
 
@@ -465,7 +532,8 @@ final class RecurrenceRule
 
         while ($monthDate <= $to) {
             if ($this->matchesByMonth($monthDate)) {
-                foreach ($this->expandMonth($monthDate) as $candidate) {
+                $monthCandidates = $this->applyBySetPos($this->expandMonth($monthDate));
+                foreach ($monthCandidates as $candidate) {
                     if ($candidate < $from || $candidate > $to) {
                         continue;
                     }
@@ -553,23 +621,32 @@ final class RecurrenceRule
         $hits     = 0;
 
         while ($yearDate <= $to) {
-            $months = $this->byMonth ?? range(1, 12);
+            $months          = $this->byMonth ?? range(1, 12);
+            $yearCandidates  = [];
             foreach ($months as $month) {
                 $monthStart = $yearDate->setDate((int) $yearDate->format('Y'), $month, 1);
                 foreach ($this->expandMonth($monthStart) as $candidate) {
-                    if ($candidate < $from || $candidate > $to) {
-                        continue;
-                    }
-                    if ($this->until !== null && $candidate > $this->until) {
-                        break 3;
-                    }
-                    $results[] = $candidate;
-                    $hits++;
-                    if ($this->count !== null && $hits >= $this->count) {
-                        return $results;
-                    }
+                    $yearCandidates[] = $candidate;
                 }
             }
+
+            usort($yearCandidates, fn ($a, $b) => $a <=> $b);
+            $yearCandidates = $this->applyBySetPos($yearCandidates);
+
+            foreach ($yearCandidates as $candidate) {
+                if ($candidate < $from || $candidate > $to) {
+                    continue;
+                }
+                if ($this->until !== null && $candidate > $this->until) {
+                    break 2;
+                }
+                $results[] = $candidate;
+                $hits++;
+                if ($this->count !== null && $hits >= $this->count) {
+                    return $results;
+                }
+            }
+
             $yearDate = $yearDate->modify('+' . $this->interval . ' years')->modify('first day of January this year');
         }
 
@@ -631,6 +708,30 @@ final class RecurrenceRule
         }
 
         return null;
+    }
+
+    /**
+     * Apply BYSETPOS filter to a sorted list of period candidates.
+     * Positive positions count from start (1=first), negative from end (-1=last).
+     *
+     * @param  list<DateTimeImmutable> $candidates
+     * @return list<DateTimeImmutable>
+     */
+    private function applyBySetPos(array $candidates): array
+    {
+        if ($this->bySetPos === null || $candidates === []) {
+            return $candidates;
+        }
+        $total    = count($candidates);
+        $selected = [];
+        foreach ($this->bySetPos as $pos) {
+            $idx = $pos > 0 ? $pos - 1 : $total + $pos;
+            if ($idx >= 0 && $idx < $total) {
+                $selected[$idx] = $candidates[$idx];
+            }
+        }
+        ksort($selected);
+        return array_values($selected);
     }
 
     private static function dayToRruleCode(DayName $day): string

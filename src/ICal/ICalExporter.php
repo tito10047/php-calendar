@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tito10047\Calendar\ICal;
 
 use DateTimeImmutable;
+use Tito10047\Calendar\Enum\EventStatus;
 use Tito10047\Calendar\Recurrence\RecurrenceRule;
 
 /**
@@ -45,6 +46,9 @@ final class ICalExporter
         return $clone;
     }
 
+    /**
+     * @param list<string> $categories
+     */
     public function addEvent(
         string $title,
         DateTimeImmutable $from,
@@ -53,6 +57,9 @@ final class ICalExporter
         ?string $location = null,
         ?string $uid = null,
         ?string $url = null,
+        ?string $color = null,
+        array $categories = [],
+        ?EventStatus $status = null,
     ): self {
         $clone           = clone $this;
         $clone->events[] = new ICalEvent(
@@ -64,10 +71,16 @@ final class ICalExporter
             location:    $location,
             rrule:       null,
             url:         $url,
+            color:       $color,
+            categories:  $categories,
+            status:      $status,
         );
         return $clone;
     }
 
+    /**
+     * @param list<string> $categories
+     */
     public function addRecurringEvent(
         string $title,
         RecurrenceRule $rule,
@@ -76,6 +89,9 @@ final class ICalExporter
         ?string $location = null,
         ?string $uid = null,
         ?string $url = null,
+        ?string $color = null,
+        array $categories = [],
+        ?EventStatus $status = null,
     ): self {
         $clone           = clone $this;
         $clone->events[] = new ICalEvent(
@@ -87,6 +103,9 @@ final class ICalExporter
             location:    $location,
             rrule:       $rule,
             url:         $url,
+            color:       $color,
+            categories:  $categories,
+            status:      $status,
         );
         return $clone;
     }
@@ -130,6 +149,15 @@ final class ICalExporter
             }
             if ($event->url !== null) {
                 $lines[] = 'URL:' . $event->url;
+            }
+            if ($event->color !== null) {
+                $lines[] = 'COLOR:' . $event->color;
+            }
+            if ($event->categories !== []) {
+                $lines[] = 'CATEGORIES:' . implode(',', array_map([$this, 'escapeText'], $event->categories));
+            }
+            if ($event->status !== null) {
+                $lines[] = 'STATUS:' . $event->status->value;
             }
             if ($event->rrule !== null) {
                 $lines[] = 'RRULE:' . $event->rrule->toRruleString();
