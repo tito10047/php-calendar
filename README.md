@@ -13,6 +13,7 @@ Import an `.ics` file. Serve a JSON feed to FullCalendar. Sync via CalDAV. All i
 
 ## Why this library?
 
+- Works with **Symfony UX Live components** / **Livewire** — no hydration, no client state sync
 - **Server-side grid rendering** — monthly, weekly, work-week, or any custom date range
 - **RFC 5545 iCal** — full parse/export: RRULE, EXDATE, RDATE, VALARM, ORGANIZER, ATTENDEE, RECURRENCE-ID, X-* props, CalDAV metadata
 - **JSON feed** — one call produces FullCalendar / Toast UI / DHTMLX-compatible output
