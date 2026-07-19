@@ -61,12 +61,13 @@ final class JsonSerializer
 
         foreach ($this->events as $event) {
             if ($this->from !== null && $this->to !== null) {
-                $occurrences = $event->occurrences($this->from, $this->to);
-                foreach ($occurrences as $occurrence) {
-                    $result[] = $this->buildEntry($event, $occurrence);
+                // expandOccurrences returns full ICalEvent objects with dates set,
+                // and handles RECURRENCE-ID overrides transparently
+                foreach ($event->expandOccurrences($this->from, $this->to) as $occurrence) {
+                    $result[] = $this->buildEntry($occurrence);
                 }
             } else {
-                $result[] = $this->buildEntry($event, $event->dtStart);
+                $result[] = $this->buildEntry($event);
             }
         }
 
@@ -87,34 +88,18 @@ final class JsonSerializer
     // -------------------------------------------------------------------------
 
     /** @return array<string, mixed> */
-    private function buildEntry(ICalEvent $event, DateTimeImmutable $occurrenceStart): array
+    private function buildEntry(ICalEvent $event): array
     {
         $allDay = $this->isAllDay($event->dtStart);
-
-        // expand() strips time to 00:00:00; restore original time for timed events
-        if (!$allDay) {
-            $occurrenceStart = $occurrenceStart->setTime(
-                (int) $event->dtStart->format('H'),
-                (int) $event->dtStart->format('i'),
-                (int) $event->dtStart->format('s'),
-            );
-        }
-
-        // Preserve event duration across every occurrence
-        $dtEnd = null;
-        if ($event->dtEnd !== null) {
-            $duration = $event->dtStart->diff($event->dtEnd);
-            $dtEnd    = $occurrenceStart->add($duration);
-        }
 
         return [
             'id'            => $event->uid,
             'title'         => $event->summary ?? '',
             'start'         => $allDay
-                ? $occurrenceStart->format('Y-m-d')
-                : $occurrenceStart->format('Y-m-d\TH:i:s'),
-            'end'           => $dtEnd !== null
-                ? ($allDay ? $dtEnd->format('Y-m-d') : $dtEnd->format('Y-m-d\TH:i:s'))
+                ? $event->dtStart->format('Y-m-d')
+                : $event->dtStart->format('Y-m-d\TH:i:s'),
+            'end'           => $event->dtEnd !== null
+                ? ($allDay ? $event->dtEnd->format('Y-m-d') : $event->dtEnd->format('Y-m-d\TH:i:s'))
                 : null,
             'allDay'        => $allDay,
             'color'         => $event->color,

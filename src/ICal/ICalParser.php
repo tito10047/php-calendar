@@ -6,7 +6,9 @@ namespace Tito10047\Calendar\ICal;
 
 use DateTimeImmutable;
 use DateTimeZone;
+use Tito10047\Calendar\Enum\EventClass;
 use Tito10047\Calendar\Enum\EventStatus;
+use Tito10047\Calendar\Enum\EventTransp;
 use Tito10047\Calendar\Recurrence\RecurrenceRule;
 
 /**
@@ -96,7 +98,11 @@ final class ICalParser
     {
         $lines  = $this->unfold($icsContent);
         $tzMap  = $this->parseTzMap($lines);
-        $events = [];
+
+        /** @var list<ICalEvent> $masters */
+        $masters   = [];
+        /** @var list<ICalEvent> $overrides */
+        $overrides = [];
 
         $inEvent    = false;
         $inAlarm    = false;
@@ -119,7 +125,11 @@ final class ICalParser
                 $inEvent = false;
                 $event   = $this->buildEvent($properties, $tzMap, $alarms);
                 if ($event !== null) {
-                    $events[] = $event;
+                    if ($event->recurrenceId !== null) {
+                        $overrides[] = $event;
+                    } else {
+                        $masters[] = $event;
+                    }
                 }
                 continue;
             }
@@ -148,7 +158,17 @@ final class ICalParser
             }
         }
 
-        return $events;
+        // Attach RECURRENCE-ID overrides to their master events
+        foreach ($overrides as $override) {
+            foreach ($masters as $i => $master) {
+                if ($master->uid === $override->uid && $override->recurrenceId !== null) {
+                    $masters[$i] = $master->withModifiedOccurrence($override->recurrenceId, $override);
+                    break;
+                }
+            }
+        }
+
+        return array_values($masters);
     }
 
     // -------------------------------------------------------------------------
@@ -355,23 +375,54 @@ final class ICalParser
             }
         }
 
+        // X-* extension properties
+        $extensionProperties = [];
+        foreach ($props as $propName => $entries) {
+            if (str_starts_with($propName, 'X-')) {
+                $extensionProperties[$propName] = $entries[0]['value'];
+            }
+        }
+
+        // TRANSP
+        $transpRaw = $this->firstValue($props, 'TRANSP');
+        $transp    = $transpRaw !== null ? EventTransp::tryFrom(strtoupper($transpRaw)) : null;
+
+        // CLASS
+        $classRaw       = $this->firstValue($props, 'CLASS');
+        $classification = $classRaw !== null ? EventClass::tryFrom(strtoupper($classRaw)) : null;
+
+        // CalDAV metadata
+        $dtStampEntry    = $props['DTSTAMP'][0] ?? null;
+        $createdEntry    = $props['CREATED'][0] ?? null;
+        $lastModEntry    = $props['LAST-MODIFIED'][0] ?? null;
+        $recurrenceEntry = $props['RECURRENCE-ID'][0] ?? null;
+
         return new ICalEvent(
-            uid:           $uid,
-            dtStart:       $dtStart,
-            dtEnd:         $dtEnd,
-            summary:       $this->firstValue($props, 'SUMMARY'),
-            description:   $this->firstValue($props, 'DESCRIPTION'),
-            location:      $this->firstValue($props, 'LOCATION'),
-            rrule:         $rrule,
-            exDates:       $exDates,
-            url:           $this->firstValue($props, 'URL'),
-            color:         $this->firstValue($props, 'COLOR'),
-            categories:    $categories,
-            status:        $status,
-            alarms:        $alarms,
-            organizer:     $organizerEmail,
-            organizerName: $organizerName,
-            attendees:     $attendees,
+            uid:                 $uid,
+            dtStart:             $dtStart,
+            dtEnd:               $dtEnd,
+            summary:             $this->firstValue($props, 'SUMMARY'),
+            description:         $this->firstValue($props, 'DESCRIPTION'),
+            location:            $this->firstValue($props, 'LOCATION'),
+            rrule:               $rrule,
+            exDates:             $exDates,
+            url:                 $this->firstValue($props, 'URL'),
+            color:               $this->firstValue($props, 'COLOR'),
+            categories:          $categories,
+            status:              $status,
+            alarms:              $alarms,
+            organizer:           $organizerEmail,
+            organizerName:       $organizerName,
+            attendees:           $attendees,
+            extensionProperties: $extensionProperties,
+            transp:              $transp,
+            classification:      $classification,
+            priority:            (int) ($this->firstValue($props, 'PRIORITY') ?? 0),
+            dtStamp:             $dtStampEntry !== null ? $this->parseDateTime($dtStampEntry['value'], $dtStampEntry['params'], $tzMap) : null,
+            created:             $createdEntry !== null ? $this->parseDateTime($createdEntry['value'], $createdEntry['params'], $tzMap) : null,
+            lastModified:        $lastModEntry !== null ? $this->parseDateTime($lastModEntry['value'], $lastModEntry['params'], $tzMap) : null,
+            sequence:            (int) ($this->firstValue($props, 'SEQUENCE') ?? 0),
+            recurrenceId:        $recurrenceEntry !== null ? $this->parseDateTime($recurrenceEntry['value'], $recurrenceEntry['params'], $tzMap) : null,
         );
     }
 

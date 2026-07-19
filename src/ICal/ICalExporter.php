@@ -130,56 +130,7 @@ final class ICalExporter
         ];
 
         foreach ($this->events as $event) {
-            $lines[] = 'BEGIN:VEVENT';
-            $lines[] = 'UID:' . $event->uid;
-            $lines[] = 'DTSTAMP:' . $now->format('Ymd\THis\Z');
-            $lines[] = $this->formatDtProp('DTSTART', $event->dtStart);
-
-            if ($event->dtEnd !== null) {
-                $lines[] = $this->formatDtProp('DTEND', $event->dtEnd);
-            }
-
-            $lines[] = 'SUMMARY:' . $this->escapeText($event->summary ?? '');
-
-            if ($event->description !== null) {
-                $lines[] = 'DESCRIPTION:' . $this->escapeText($event->description);
-            }
-            if ($event->location !== null) {
-                $lines[] = 'LOCATION:' . $this->escapeText($event->location);
-            }
-            if ($event->url !== null) {
-                $lines[] = 'URL:' . $event->url;
-            }
-            if ($event->color !== null) {
-                $lines[] = 'COLOR:' . $event->color;
-            }
-            if ($event->categories !== []) {
-                $lines[] = 'CATEGORIES:' . implode(',', array_map([$this, 'escapeText'], $event->categories));
-            }
-            if ($event->status !== null) {
-                $lines[] = 'STATUS:' . $event->status->value;
-            }
-            if ($event->rrule !== null) {
-                $lines[] = 'RRULE:' . $event->rrule->toRruleString();
-            }
-            if ($event->organizer !== null) {
-                $orgLine = 'ORGANIZER';
-                if ($event->organizerName !== null) {
-                    $orgLine .= ';CN=' . $event->organizerName;
-                }
-                $orgLine .= ':mailto:' . $event->organizer;
-                $lines[] = $orgLine;
-            }
-            foreach ($event->attendees as $attendee) {
-                $lines[] = $attendee->toIcalLine();
-            }
-            foreach ($event->alarms as $alarm) {
-                foreach (explode("\r\n", $alarm->toIcalLines()) as $alarmLine) {
-                    $lines[] = $alarmLine;
-                }
-            }
-
-            $lines[] = 'END:VEVENT';
+            array_push($lines, ...$this->buildEventLines($event, $now));
         }
 
         $lines[] = 'END:VCALENDAR';
@@ -187,9 +138,130 @@ final class ICalExporter
         return implode("\r\n", $this->fold($lines)) . "\r\n";
     }
 
+    /**
+     * Write the iCal output to an open writable stream without building the
+     * entire string in memory — suitable for large calendars (10 000+ events).
+     *
+     * @param resource $stream A writable stream resource (e.g. fopen(), php://output).
+     */
+    public function exportToStream($stream): void
+    {
+        $now    = new DateTimeImmutable('now', new \DateTimeZone('UTC'));
+        $header = [
+            'BEGIN:VCALENDAR',
+            'VERSION:2.0',
+            'PRODID:' . $this->prodId,
+            'CALSCALE:GREGORIAN',
+            'METHOD:PUBLISH',
+            'X-WR-CALNAME:' . $this->escapeText($this->calendarName),
+        ];
+        $this->writeLines($stream, $header);
+
+        foreach ($this->events as $event) {
+            $lines = $this->buildEventLines($event, $now);
+            $this->writeLines($stream, $lines);
+        }
+
+        fwrite($stream, "END:VCALENDAR\r\n");
+    }
+
     // -------------------------------------------------------------------------
     // Helpers
     // -------------------------------------------------------------------------
+
+    /**
+     * Build the RFC 5545 lines for a single VEVENT (unfolded).
+     *
+     * @return list<string>
+     */
+    private function buildEventLines(ICalEvent $event, DateTimeImmutable $now): array
+    {
+        $lines = [];
+        $lines[] = 'BEGIN:VEVENT';
+        $lines[] = 'UID:' . $event->uid;
+        $lines[] = 'DTSTAMP:' . ($event->dtStamp ?? $now)->format('Ymd\THis\Z');
+        if ($event->created !== null) {
+            $lines[] = 'CREATED:' . $event->created->format('Ymd\THis\Z');
+        }
+        if ($event->lastModified !== null) {
+            $lines[] = 'LAST-MODIFIED:' . $event->lastModified->format('Ymd\THis\Z');
+        }
+        if ($event->sequence !== 0) {
+            $lines[] = 'SEQUENCE:' . $event->sequence;
+        }
+        $lines[] = $this->formatDtProp('DTSTART', $event->dtStart);
+        if ($event->dtEnd !== null) {
+            $lines[] = $this->formatDtProp('DTEND', $event->dtEnd);
+        }
+        if ($event->recurrenceId !== null) {
+            $lines[] = $this->formatDtProp('RECURRENCE-ID', $event->recurrenceId);
+        }
+        $lines[] = 'SUMMARY:' . $this->escapeText($event->summary ?? '');
+        if ($event->description !== null) {
+            $lines[] = 'DESCRIPTION:' . $this->escapeText($event->description);
+        }
+        if ($event->location !== null) {
+            $lines[] = 'LOCATION:' . $this->escapeText($event->location);
+        }
+        if ($event->url !== null) {
+            $lines[] = 'URL:' . $event->url;
+        }
+        if ($event->color !== null) {
+            $lines[] = 'COLOR:' . $event->color;
+        }
+        if ($event->categories !== []) {
+            $lines[] = 'CATEGORIES:' . implode(',', array_map([$this, 'escapeText'], $event->categories));
+        }
+        if ($event->status !== null) {
+            $lines[] = 'STATUS:' . $event->status->value;
+        }
+        if ($event->transp !== null) {
+            $lines[] = 'TRANSP:' . $event->transp->value;
+        }
+        if ($event->classification !== null) {
+            $lines[] = 'CLASS:' . $event->classification->value;
+        }
+        if ($event->priority !== 0) {
+            $lines[] = 'PRIORITY:' . $event->priority;
+        }
+        if ($event->rrule !== null) {
+            $lines[] = 'RRULE:' . $event->rrule->toRruleString();
+        }
+        if ($event->organizer !== null) {
+            $orgLine = 'ORGANIZER';
+            if ($event->organizerName !== null) {
+                $orgLine .= ';CN=' . $event->organizerName;
+            }
+            $orgLine .= ':mailto:' . $event->organizer;
+            $lines[] = $orgLine;
+        }
+        foreach ($event->attendees as $attendee) {
+            $lines[] = $attendee->toIcalLine();
+        }
+        foreach ($event->extensionProperties as $xName => $xValue) {
+            $lines[] = $xName . ':' . $xValue;
+        }
+        foreach ($event->alarms as $alarm) {
+            foreach (explode("\r\n", $alarm->toIcalLines()) as $alarmLine) {
+                $lines[] = $alarmLine;
+            }
+        }
+        $lines[] = 'END:VEVENT';
+        return $lines;
+    }
+
+    /**
+     * Fold and write a list of lines to a stream.
+     *
+     * @param resource     $stream
+     * @param list<string> $lines
+     */
+    private function writeLines($stream, array $lines): void
+    {
+        foreach ($this->fold($lines) as $line) {
+            fwrite($stream, $line . "\r\n");
+        }
+    }
 
     /**
      * Serialise a datetime property respecting the original timezone.
@@ -206,7 +278,7 @@ final class ICalExporter
             $tzName = 'UTC';
         }
 
-        if ($tzName === 'UTC') {
+        if ($tzName === 'UTC' || $tzName === 'Z') {
             return $propName . ':' . $dt->setTimezone(new \DateTimeZone('UTC'))->format('Ymd\THis\Z');
         }
 

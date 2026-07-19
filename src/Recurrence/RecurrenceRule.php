@@ -10,7 +10,7 @@ use Tito10047\Calendar\Enum\DayName;
 /**
  * Immutable value object representing an RFC 5545 RRULE.
  *
- * Supported rule parts: FREQ, INTERVAL, COUNT, UNTIL, BYDAY, BYMONTH, BYMONTHDAY, BYSETPOS.
+ * Supported rule parts: FREQ, INTERVAL, COUNT, UNTIL, BYDAY, BYMONTH, BYMONTHDAY, BYSETPOS, WKST.
  * Additionally supports RDATE (extra explicit dates merged into expand output).
  */
 final class RecurrenceRule
@@ -36,6 +36,9 @@ final class RecurrenceRule
     /** @var list<string> RDATE extra explicit occurrence dates in Y-m-d format */
     private readonly array $rDates;
 
+    /** Week start day for recurrence calculations (WKST rule part; default Monday). */
+    private readonly DayName $wkst;
+
     /**
      * @param list<DayName>            $byDay
      * @param array<int, DayName>|null $byNthWeekday
@@ -57,6 +60,7 @@ final class RecurrenceRule
         array $exDates,
         ?array $bySetPos = null,
         array $rDates = [],
+        DayName $wkst = DayName::Monday,
     ) {
         $this->byDay        = $byDay;
         $this->byNthWeekday = $byNthWeekday;
@@ -65,6 +69,7 @@ final class RecurrenceRule
         $this->exDates      = $exDates;
         $this->bySetPos     = $bySetPos;
         $this->rDates       = $rDates;
+        $this->wkst         = $wkst;
     }
 
     // -------------------------------------------------------------------------
@@ -148,7 +153,13 @@ final class RecurrenceRule
             }
         }
 
-        return new self($frequency, $interval, $count, $until, $byDay, $byNthWeekday, $byMonth, $byMonthDay, [], $bySetPos);
+        $wkst = DayName::Monday;
+        if (isset($parts['WKST'])) {
+            $wkst = self::rruleCodeToDay($parts['WKST'])
+                ?? throw new \InvalidArgumentException("Unknown WKST day code: {$parts['WKST']}");
+        }
+
+        return new self($frequency, $interval, $count, $until, $byDay, $byNthWeekday, $byMonth, $byMonthDay, [], $bySetPos, [], $wkst);
     }
 
     // -------------------------------------------------------------------------
@@ -169,6 +180,7 @@ final class RecurrenceRule
             $this->exDates,
             $this->bySetPos,
             $this->rDates,
+            $this->wkst,
         );
     }
 
@@ -186,6 +198,7 @@ final class RecurrenceRule
             $this->exDates,
             $this->bySetPos,
             $this->rDates,
+            $this->wkst,
         );
     }
 
@@ -203,6 +216,7 @@ final class RecurrenceRule
             $this->exDates,
             $this->bySetPos,
             $this->rDates,
+            $this->wkst,
         );
     }
 
@@ -223,6 +237,7 @@ final class RecurrenceRule
             $this->exDates,
             $this->bySetPos,
             $this->rDates,
+            $this->wkst,
         );
     }
 
@@ -240,6 +255,7 @@ final class RecurrenceRule
             $this->exDates,
             $this->bySetPos,
             $this->rDates,
+            $this->wkst,
         );
     }
 
@@ -261,6 +277,7 @@ final class RecurrenceRule
             array_values(array_unique($exDates)),
             $this->bySetPos,
             $this->rDates,
+            $this->wkst,
         );
     }
 
@@ -279,6 +296,7 @@ final class RecurrenceRule
             $this->exDates,
             $this->bySetPos,
             $this->rDates,
+            $this->wkst,
         );
     }
 
@@ -305,6 +323,7 @@ final class RecurrenceRule
             $this->exDates,
             $this->bySetPos,
             $this->rDates,
+            $this->wkst,
         );
     }
 
@@ -331,6 +350,7 @@ final class RecurrenceRule
             $this->exDates,
             array_values($positions),
             $this->rDates,
+            $this->wkst,
         );
     }
 
@@ -356,6 +376,26 @@ final class RecurrenceRule
             $this->exDates,
             $this->bySetPos,
             array_values(array_unique($rDates)),
+            $this->wkst,
+        );
+    }
+
+    /** Set WKST — the first day of the week for recurrence calculations (default: Monday). */
+    public function weekStart(DayName $day): self
+    {
+        return new self(
+            $this->frequency,
+            $this->interval,
+            $this->count,
+            $this->until,
+            $this->byDay,
+            $this->byNthWeekday,
+            $this->byMonth,
+            $this->byMonthDay,
+            $this->exDates,
+            $this->bySetPos,
+            $this->rDates,
+            $day,
         );
     }
 
@@ -452,6 +492,9 @@ final class RecurrenceRule
         if ($this->bySetPos !== null) {
             $parts[] = 'BYSETPOS=' . implode(',', $this->bySetPos);
         }
+        if ($this->wkst !== DayName::Monday) {
+            $parts[] = 'WKST=' . self::dayToRruleCode($this->wkst);
+        }
 
         return implode(';', $parts);
     }
@@ -513,6 +556,12 @@ final class RecurrenceRule
         return $this->rDates;
     }
 
+    /** Week start day (WKST); default Monday. */
+    public function getWkst(): DayName
+    {
+        return $this->wkst;
+    }
+
     // -------------------------------------------------------------------------
     // Internal helpers
     // -------------------------------------------------------------------------
@@ -557,8 +606,13 @@ final class RecurrenceRule
     {
         $results    = [];
         $targetDays = $this->byDay !== [] ? $this->byDay : [DayName::fromDate($from)];
-        $weekStart  = $from->modify('monday this week')->setTime(0, 0, 0);
-        $hits       = 0;
+        $wkstName   = strtolower($this->wkst->name);
+        $weekStart  = $from->modify("{$wkstName} this week")->setTime(0, 0, 0);
+        // If $from is already the wkst day, modify() stays on the same day — ensure we start from the right week
+        if ($weekStart > $from) {
+            $weekStart = $weekStart->modify('-7 days');
+        }
+        $hits = 0;
 
         while ($weekStart <= $to) {
             $weekCandidates = [];
@@ -626,12 +680,10 @@ final class RecurrenceRule
     /** @return list<DateTimeImmutable> */
     private function expandMonth(DateTimeImmutable $monthStart): array
     {
-        // BYMONTHDAY takes precedence when set — iterate over those specific days
         if ($this->byMonthDay !== null) {
             $results     = [];
             $daysInMonth = (int) $monthStart->format('t');
             foreach ($this->byMonthDay as $dom) {
-                // Resolve negative values: -1 = last day, -2 = second-to-last, etc.
                 $resolved = $dom >= 0 ? $dom : $daysInMonth + $dom + 1;
                 if ($resolved < 1 || $resolved > $daysInMonth) {
                     continue;
@@ -673,7 +725,6 @@ final class RecurrenceRule
             return $results;
         }
 
-        // No BYDAY — same day-of-month
         $dom       = (int) $monthStart->format('d');
         $candidate = $monthStart->setDate(
             (int) $monthStart->format('Y'),
@@ -691,8 +742,8 @@ final class RecurrenceRule
         $hits     = 0;
 
         while ($yearDate <= $to) {
-            $months          = $this->byMonth ?? range(1, 12);
-            $yearCandidates  = [];
+            $months         = $this->byMonth ?? range(1, 12);
+            $yearCandidates = [];
             foreach ($months as $month) {
                 $monthStart = $yearDate->setDate((int) $yearDate->format('Y'), $month, 1);
                 foreach ($this->expandMonth($monthStart) as $candidate) {
@@ -782,7 +833,6 @@ final class RecurrenceRule
 
     /**
      * Apply BYSETPOS filter to a sorted list of period candidates.
-     * Positive positions count from start (1=first), negative from end (-1=last).
      *
      * @param  list<DateTimeImmutable> $candidates
      * @return list<DateTimeImmutable>
@@ -814,6 +864,20 @@ final class RecurrenceRule
             DayName::Friday    => 'FR',
             DayName::Saturday  => 'SA',
             DayName::Sunday    => 'SU',
+        };
+    }
+
+    private static function rruleCodeToDay(string $code): ?DayName
+    {
+        return match (strtoupper($code)) {
+            'MO' => DayName::Monday,
+            'TU' => DayName::Tuesday,
+            'WE' => DayName::Wednesday,
+            'TH' => DayName::Thursday,
+            'FR' => DayName::Friday,
+            'SA' => DayName::Saturday,
+            'SU' => DayName::Sunday,
+            default => null,
         };
     }
 
