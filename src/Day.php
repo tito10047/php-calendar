@@ -1,4 +1,6 @@
 <?php
+
+declare(strict_types=1);
 /**
  * Created by PhpStorm.
  * User: Jozef Môstka
@@ -10,18 +12,22 @@ namespace Tito10047\Calendar;
 
 final class Day
 {
-
+    /**
+     * @param array<mixed>|null $data
+     */
     public function __construct(
         public readonly \DateTimeImmutable $date,
         public readonly bool $ghost,
         public readonly bool $today,
         public readonly bool $enabled,
         public readonly ?array $data = null
-    )
-    {
+    ) {
     }
 
-    public function withData(array $data):self
+    /**
+     * @param array<mixed> $data
+     */
+    public function withData(array $data): self
     {
         return new self(
             $this->date,

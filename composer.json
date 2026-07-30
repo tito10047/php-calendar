@@ -1,10 +1,31 @@
 {
-    "name": "tito10047/php-callendar",
+    "name": "tito10047/php-calendar",
     "type": "library",
-    "description": "Php server side rendered calendar",
+    "description": "Framework-agnostic PHP calendar data library — monthly, weekly and work-week grids, RFC 5545 recurrence rules, iCal import/export, and resource scheduling.",
+    "keywords": [
+        "calendar",
+        "ical",
+        "icalendar",
+        "rfc5545",
+        "recurrence",
+        "rrule",
+        "schedule",
+        "event",
+        "date"
+    ],
+    "homepage": "https://mostka.sk",
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Jozef Môstka",
+            "email": "mostka.j@gmail.com",
+            "homepage": "https://mostka.sk",
+            "role": "Developer"
+        }
+    ],
     "minimum-stability": "stable",
     "require": {
-        "php": ">=8.1"
+        "php": ">=8.2"
     },
     "autoload": {
         "psr-4": {
@@ -17,7 +38,15 @@
         }
     },
     "require-dev": {
-        "phpunit/phpunit": "^9.5",
-        "symfony/contracts": "^3.5"
+        "phpunit/phpunit": "^11.0 || ^12.0 || ^13.0",
+        "phpstan/phpstan": "^2.0",
+        "friendsofphp/php-cs-fixer": "^3.0"
+    },
+    "scripts": {
+        "test":     "vendor/bin/phpunit",
+        "phpstan":  "vendor/bin/phpstan analyse",
+        "cs-check": "vendor/bin/php-cs-fixer check --diff",
+        "cs-fix":   "vendor/bin/php-cs-fixer fix",
+        "quality":  ["@phpstan", "@cs-check", "@test"]
     }
 }
