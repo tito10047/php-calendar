@@ -18,7 +18,21 @@ $events = $parser->parseUrl('https://calendar.google.com/calendar/ical/.../basic
 $events = $parser->parseFile('/path/to/calendar.ics');
 $events = $parser->parseString($icsContent);
 // → list<ICalEvent>
+
+// Options: size limit (bytes), HTTP timeout (seconds), zone for floating times and DATE values
+$parser = new ICalParser(
+    maxBytes:        10 * 1024 * 1024,              // default 10 MiB
+    timeout:         10,                            // default 10 s
+    defaultTimezone: new DateTimeZone('Europe/Bratislava'), // default: date_default_timezone_get()
+);
 ```
+
+`parseUrl()` accepts only `http://` and `https://` URLs (`webcal://` is rewritten to `https://`), enforces the
+size limit, requires a 2xx status, and never puts URL credentials into exception messages.
+`parseFile()` is meant for **trusted local paths** — never pass user input to it; use `parseUrl()` for remote feeds.
+
+The parser is forgiving: a broken or unsupported `RRULE` does not abort the feed — the event is kept as a
+non-recurring event.
 
 ### Attach to a calendar grid
 
@@ -30,7 +44,10 @@ $calendar = Calendar::forMonth(2024, 11)->setDataLoader($loader);
 // Each Day now has $day->data populated with ICalEvent objects for that date
 ```
 
-`ICalDataLoader` calls `ICalEvent::occurrences($from, $to)` per event — recurring events are expanded lazily, only for the visible range.
+`ICalDataLoader` calls `ICalEvent::expandOccurrences($from, $to)` per event — recurring events are expanded lazily, only for the visible range.
+`$day->data` holds **per-instance** `ICalEvent`s (the instance's own `dtStart` / `dtEnd`, RECURRENCE-ID overrides applied).
+Multi-day events appear on every day they cover (for all-day events `DTEND` is exclusive), and timed events are
+bucketed by day in the calendar's timezone.
 
 ### What the parser handles
 
@@ -39,19 +56,22 @@ $calendar = Calendar::forMonth(2024, 11)->setDataLoader($loader);
 | `VEVENT` | one-time and recurring events |
 | `VTODO` | task/todo components (via `parseTodos()`) |
 | `VALARM` | display, audio, and email reminders |
-| `RRULE` | full recurrence (FREQ, INTERVAL, COUNT, UNTIL, BYDAY, BYMONTH, BYMONTHDAY, BYSETPOS, WKST) |
-| `EXDATE` | excluded dates |
-| `RDATE` | extra explicit occurrence dates |
-| `RECURRENCE-ID` | modified single occurrences in a recurring series |
-| `DTSTART`, `DTEND`, `DURATION` | event time bounds |
+| `RRULE` | full recurrence — see [recurrence.md](recurrence.md); a broken/unsupported rule leaves the event non-recurring |
+| `EXDATE` | excluded dates (also comma-separated lists) |
+| `RDATE` | extra explicit occurrence dates — also without an `RRULE`, and `VALUE=PERIOD` (start is used) |
+| `RECURRENCE-ID` | modified occurrences, incl. `RANGE=THISANDFUTURE`; overrides without a recurring master are returned as standalone events |
+| `DTSTART`, `DTEND`, `DURATION` | event time bounds; `VALUE=DATE` → all-day event (`allDay = true`) at midnight in the default timezone |
 | `SUMMARY`, `DESCRIPTION`, `LOCATION`, `URL` | basic metadata |
 | `COLOR`, `CATEGORIES`, `STATUS` | visual / scheduling metadata |
 | `TRANSP`, `CLASS`, `PRIORITY` | free/busy, visibility, priority |
 | `ORGANIZER`, `ATTENDEE` | meeting invitations |
 | `DTSTAMP`, `CREATED`, `LAST-MODIFIED`, `SEQUENCE` | CalDAV sync metadata |
 | `X-*` extension properties | preserved and re-exported |
-| `VTIMEZONE` | timezone resolution; TZID params; UTC `Z`-suffix |
+| `VTIMEZONE` | timezone resolution; TZID params (also via `X-LIC-LOCATION`, offset fallback); UTC `Z`-suffix |
 | RFC 5545 line folding | CRLF + whitespace continuation unfolded automatically |
+| TEXT escaping | `\,` `\;` `\n` `\\` unescaped |
+| Parameters | DQUOTE-quoted values (`CN="Doe, John"`), RFC 6868 `^`-escapes |
+| Misc | case-insensitive `BEGIN`/`END`, UTF-8 BOM |
 
 ---
 
@@ -61,7 +81,8 @@ $calendar = Calendar::forMonth(2024, 11)->setDataLoader($loader);
 // Core
 $event->uid;                  // string
 $event->dtStart;              // DateTimeImmutable
-$event->dtEnd;                // ?DateTimeImmutable
+$event->dtEnd;                // ?DateTimeImmutable  (exclusive end date when allDay)
+$event->allDay;               // bool — DATE-valued DTSTART
 $event->summary;              // ?string
 $event->description;          // ?string
 $event->location;             // ?string
@@ -84,7 +105,8 @@ $event->attendees;            // list<Attendee>
 $event->alarms;               // list<VAlarm>
 
 // RECURRENCE-ID overrides
-$event->recurrenceId;         // ?DateTimeImmutable  (set on override events only)
+$event->recurrenceId;         // ?DateTimeImmutable  (set on override events and expanded instances)
+$event->thisAndFuture;        // bool — RECURRENCE-ID;RANGE=THISANDFUTURE
 $event->modifiedOccurrences;  // array<Y-m-d, ICalEvent>  (on master event)
 
 // CalDAV sync metadata
@@ -99,9 +121,28 @@ $event->getExtendedProperty('X-GOOGLE-CONFERENCE'); // ?string
 
 // Helpers
 $event->isRecurring();        // bool
-$event->occurrences($from, $to);        // list<DateTimeImmutable>  — dates only
-$event->expandOccurrences($from, $to);  // list<ICalEvent>  — full objects, RECURRENCE-ID applied
+$event->getEnd();             // ?DateTimeImmutable — exclusive end (dtEnd)
+$event->getEnd($start);       // ?DateTimeImmutable — end of the instance starting at $start
+$event->withDates($start, $end); // ICalEvent copy with different start / end
+$event->occurrences($from, $to);        // list<DateTimeImmutable>  — instance START datetimes
+$event->expandOccurrences($from, $to);  // list<ICalEvent>  — per-instance objects, RECURRENCE-ID applied
 $event->toArray();            // array — ready for Day::$data
+```
+
+### `occurrences()` and `expandOccurrences()`
+
+Both return every instance that **overlaps** the days `[from, to]` (both inclusive):
+
+- `occurrences()` returns the instances' **start datetimes** (with the event's time and timezone — not midnight dates),
+  including RECURRENCE-ID overrides at their moved time.
+- `expandOccurrences()` returns one `ICalEvent` per instance: the instance's own `dtStart` / `dtEnd`,
+  `recurrenceId` = the original start, and `rrule = null`.
+- Events that started before `$from` but are still running (multi-day) are included. EXDATEs are removed, RDATEs added.
+- Day boundaries use `$from`'s timezone for timed events and the event's own timezone for all-day events.
+
+```php
+$event->occurrences(new DateTimeImmutable('2025-01-01'), new DateTimeImmutable('2025-01-31'));
+// [2025-01-06 09:00 Europe/Bratislava, 2025-01-13 10:30 (moved override), ...]
 ```
 
 ---
@@ -124,6 +165,8 @@ $occurrences = $master->expandOccurrences($from, $to);
 ```
 
 If the override's new date is within `[from, to]` but the original date is outside, it is still included.
+An override with `RANGE=THISANDFUTURE` (`$override->thisAndFuture === true`) also applies to all later instances.
+An override whose master is not in the feed (e.g. a single-instance invitation) is returned as a standalone event.
 
 ---
 
@@ -312,7 +355,29 @@ header('Content-Disposition: attachment; filename="calendar.ics"');
 echo $ics;
 ```
 
-The exporter is immutable — each `add*()` call returns a new instance. Lines are folded at 75 octets per the RFC.
+The exporter is immutable — each `add*()` call returns a new instance. Lines are folded at 75 octets per the RFC (UTF-8 safe — never inside a multi-byte character).
+
+All-day events and series — pass `allDay: true` (dates are written as `VALUE=DATE`, `to` / `end` is the exclusive end date):
+
+```php
+$exporter = $exporter
+    ->addEvent(
+        title:  'Conference',
+        from:   new DateTimeImmutable('2025-06-02'),
+        to:     new DateTimeImmutable('2025-06-05'), // exclusive — covers 2–4 June
+        allDay: true,
+    )
+    ->addRecurringEvent(
+        title:  'Standup',
+        rule:   RecurrenceRule::weekly()->onDays(DayName::Monday)->limitTo(10),
+        start:  new DateTimeImmutable('2025-06-02 09:00', new DateTimeZone('Europe/Bratislava')),
+        end:    new DateTimeImmutable('2025-06-02 09:15', new DateTimeZone('Europe/Bratislava')),
+    );
+```
+
+Every value is escaped / quoted (TEXT escaping, quoted parameters, control characters stripped), so untrusted input
+cannot inject properties or components via CR/LF or `;`/`:`. `EXDATE`/`RDATE` and RECURRENCE-ID override VEVENTs are exported,
+and `UNTIL` is written as a DATE for all-day series. The `PRODID` is `-//php-calendar//php-calendar 3.0//EN`.
 
 ### Re-exporting parsed events
 
@@ -352,7 +417,10 @@ fclose($stream);
 | `20241101T120000Z` | UTC |
 | `20241101T120000` with `TZID=Europe/Berlin` param | Europe/Berlin |
 | `VTIMEZONE` block with named TZID | resolved to PHP `DateTimeZone` |
-| `VTIMEZONE` block with unknown TZID | falls back to `TZOFFSETTO` offset |
-| `20241101` (date only) | UTC midnight |
+| `VTIMEZONE` block with unknown TZID | resolved via `X-LIC-LOCATION`, else falls back to `TZOFFSETTO` offset |
+| `20241101T120000` (floating, no TZID) | default timezone (constructor argument) |
+| `20241101` (`VALUE=DATE`) | all-day event (`allDay = true`), midnight in the default timezone |
 
-On export, UTC datetimes get the `Z` suffix; named IANA timezones get `TZID=…` parameter; numeric offsets (`+01:00`) are normalised to UTC.
+On export, UTC datetimes get the `Z` suffix; named IANA timezones get `TZID=…` parameter plus a matching `VTIMEZONE`
+component (disable with `withTimezoneDefinitions(false)`); numeric offsets (`+01:00`) are normalised to UTC.
+`DTSTAMP`, `CREATED` and `LAST-MODIFIED` are always written in UTC; all-day events as `VALUE=DATE`.

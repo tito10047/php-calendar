@@ -41,6 +41,14 @@ $calendar = $calendar
     ->disableWeek(weekNum: 47);                          // full ISO week
 ```
 
+`disableWeek()` accepts an ISO week number and an optional ISO year. A value greater than 100 is treated as a `getDaysTable()` row key, which disables exactly that grid row (respecting `WeekStart`):
+
+```php
+$calendar->disableWeek(47);          // ISO week 47 of any ISO year present in the grid
+$calendar->disableWeek(47, 2024);    // ISO week 47 of ISO year 2024 only
+$calendar->disableWeek(202447);      // the grid row whose getDaysTable() key is 202447
+```
+
 ---
 
 ## Exception override

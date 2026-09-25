@@ -31,7 +31,7 @@ The returned events are fully parsed — recurring events, RECURRENCE-ID overrid
 ## Methods
 
 ```php
-// Constructor — base calendar URL (trailing slash optional)
+// Constructor — base calendar URL (trailing slash optional); must be http:// or https://
 $client = new CalDAVClient('https://cloud.example.com/remote.php/dav/calendars/user/personal/');
 
 // Set credentials — returns a new instance (immutable)
@@ -39,6 +39,15 @@ $client = $client->authenticate('username', 'password-or-app-token');
 
 // Override the default 30-second HTTP timeout
 $client = $client->withTimeout(60);
+
+// Maximum accepted response size in bytes (default 20 MiB)
+$client = $client->withMaxResponseSize(50 * 1024 * 1024);
+
+// Allow credentials over plain http:// (e.g. a local dev server) — refused by default
+$client = $client->allowInsecureHttp();
+
+// Replace the built-in HTTP transport (PSR-18 adapter, test stub, …)
+$client = $client->withTransport($transport);
 
 // Fetch events in a date range — sends a REPORT request
 $events = $client->fetchEvents($from, $to); // list<ICalEvent>
@@ -111,22 +120,66 @@ foreach ($hrefs as $href) {
 
 ---
 
+## Security
+
+- The base URL must be an absolute `http://` or `https://` URL (anything else throws `InvalidArgumentException`).
+- Credentials are **never sent over plain `http://`** unless you call `allowInsecureHttp()` — the request throws `RuntimeException` instead.
+- Redirects are followed only within the same origin (scheme, host and port). A cross-origin redirect throws
+  `RuntimeException`, so the `Authorization` header is never forwarded to another server — configure the final URL instead.
+- Responses are size-limited (`withMaxResponseSize()`, default 20 MiB) and XML is parsed without network access; a response containing a DTD is rejected.
+
+---
+
 ## Error handling
 
-`fetchEvents()` and `listCalendars()` throw `RuntimeException` when the HTTP request fails
-(network error, invalid URL, or authentication failure detected at the stream level).
+`fetchEvents()` and `listCalendars()` throw `RuntimeException` on every failure — an error never looks like "no events":
 
-HTTP-level errors (401 Unauthorized, 404 Not Found) from the server body are not automatically
-detected — check the returned event count or log the response body if you suspect access issues.
+- network / transport error
+- any non-2xx status (401 / 403 with a message pointing at the credentials and permissions)
+- cross-origin or too many redirects
+- response over the size limit
+- malformed XML or a DTD in the response
 
 ```php
 try {
     $events = $client->fetchEvents($from, $to);
 } catch (\RuntimeException $e) {
-    // Network failure or unreachable server
+    // Network failure, HTTP error (e.g. 401 wrong credentials), bad response
     $logger->error('CalDAV fetch failed: ' . $e->getMessage());
     $events = [];
 }
+```
+
+---
+
+## Custom transport
+
+`withTransport()` replaces the built-in stream-based HTTP code — use it for a PSR-18 client adapter or a stub in tests.
+The callable receives `(string $method, string $url, string $body, list<string> $headers)` and must return
+`array{status: int, body: string, location?: string|null}` (`location` = the `Location` header of a redirect).
+The same-origin redirect, status and size checks still apply.
+
+```php
+/** @var Psr\Http\Client\ClientInterface $http — configured NOT to follow redirects itself */
+/** @var Psr\Http\Message\RequestFactoryInterface $requests */
+/** @var Psr\Http\Message\StreamFactoryInterface $streams */
+
+$client = (new CalDAVClient('https://cloud.example.com/remote.php/dav/calendars/jan/personal/'))
+    ->authenticate('jan', 'app-password')
+    ->withTransport(function (string $method, string $url, string $body, array $headers) use ($http, $requests, $streams): array {
+        $request = $requests->createRequest($method, $url)->withBody($streams->createStream($body));
+        foreach ($headers as $header) {
+            [$name, $value] = explode(':', $header, 2);
+            $request = $request->withHeader(trim($name), trim($value));
+        }
+        $response = $http->sendRequest($request);
+
+        return [
+            'status'   => $response->getStatusCode(),
+            'body'     => (string) $response->getBody(),
+            'location' => $response->getHeaderLine('Location') ?: null,
+        ];
+    });
 ```
 
 ---

@@ -5,13 +5,18 @@ Implement `DayDataLoaderInterface` to attach arbitrary data to each calendar day
 ```php
 interface DayDataLoaderInterface
 {
-    public function load(DateTimeImmutable $from, DateTimeImmutable $to): void;
+    public function load(DateTimeImmutable $from, DateTimeImmutable $to): static;
     public function getData(DateTimeImmutable $date): array;
 }
 ```
 
-`load()` is called once with the full grid range — bulk-fetch here.
+`load()` is called once with the full grid range — bulk-fetch here. It returns the loaded instance:
+either `$this` (stateful loader) or a new, populated instance (immutable loader). The calendar calls
+`getData()` on **the returned instance**, so always return the object that holds the data.
 `getData()` is called once per day — return the data for that date.
+
+`getDaysTable()` is memoised per `Calendar` instance, so `load()` runs only once no matter how often
+you call `getDaysTable()` on the same calendar.
 
 ---
 
@@ -22,7 +27,7 @@ class EventLoader implements DayDataLoaderInterface
 {
     private array $byDate = [];
 
-    public function load(DateTimeImmutable $from, DateTimeImmutable $to): void
+    public function load(DateTimeImmutable $from, DateTimeImmutable $to): static
     {
         $rows = $this->db->query(
             'SELECT * FROM events WHERE date BETWEEN ? AND ?',
@@ -31,6 +36,7 @@ class EventLoader implements DayDataLoaderInterface
         foreach ($rows as $row) {
             $this->byDate[$row['date']][] = $row;
         }
+        return $this;
     }
 
     public function getData(DateTimeImmutable $date): array

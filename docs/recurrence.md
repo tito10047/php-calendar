@@ -24,8 +24,8 @@ RecurrenceRule::monthly()->onNthWeekday(-1, DayName::Friday);
 // Every other week
 RecurrenceRule::weekly()->onDays(DayName::Monday)->every(2);
 
-// Limited to 10 occurrences
-RecurrenceRule::daily()->count(10);
+// Limited to 10 occurrences (COUNT)
+RecurrenceRule::daily()->limitTo(10);
 
 // Until a specific date
 RecurrenceRule::weekly()
@@ -36,7 +36,31 @@ RecurrenceRule::weekly()
 RecurrenceRule::weekly()
     ->onDays(DayName::Monday)
     ->onMonths(1, 7); // January and July only
+
+// First Monday and first Friday of every month (several ordinal weekdays per rule)
+RecurrenceRule::monthly()
+    ->onNthWeekday(1, DayName::Monday)
+    ->withNthWeekday(1, DayName::Friday);
+
+// 100th and last day of the year; ISO week 20
+RecurrenceRule::yearly()->onYearDays(100, -1);
+RecurrenceRule::yearly()->onWeekNumbers(20)->onDays(DayName::Monday);
+
+// Sub-daily: every 90 minutes; every day at 09:00 and 17:30
+RecurrenceRule::minutely()->every(90);
+RecurrenceRule::daily()->atHours(9, 17)->atMinutes(0, 30); // 09:00, 09:30, 17:00, 17:30
 ```
+
+Factories: `secondly()`, `minutely()`, `hourly()`, `daily()`, `weekly()`, `monthly()`, `yearly()`.
+Other builders: `atSeconds()`, `onMonths()`, `onMonthDays()`, `bySetPos()`, `weekStart()`, `excluding()`, `withExtraDates()`.
+
+Invalid values throw `InvalidArgumentException` — e.g. `every(0)`, `limitTo(0)`, `onMonths(13)`,
+an unknown `FREQ`, `BYMONTHDAY` with `WEEKLY`, or `BYWEEKNO` with anything other than `YEARLY`.
+
+### Until
+
+`until()` with a value at exactly midnight is a DATE — the whole day is inclusive. Any other value is
+an exact inclusive instant. `isUntilDate()` tells you which one you have.
 
 ---
 
@@ -63,7 +87,7 @@ RecurrenceRule::monthly()
     ->bySetPos(1, -1);
 ```
 
-Works with `MONTHLY`, `WEEKLY`, and `YEARLY` frequencies.
+Works with every frequency — the set is the candidates of one period (one year, month, week, day, …).
 
 ---
 
@@ -102,6 +126,8 @@ RecurrenceRule::weekly()
 ```
 
 RDATE dates are merged with RRULE-generated dates and are not subject to `COUNT` or `UNTIL` bounds. They are preserved through parse → export.
+A value at exactly midnight is treated as a date and gets the series' DTSTART time; any other value is used as-is.
+`getExtraDates()` returns them.
 
 ---
 
@@ -136,7 +162,8 @@ $rule = RecurrenceRule::weekly()
     );
 ```
 
-In iCal, `EXDATE` lines are parsed and passed to the rule automatically.
+A value at exactly midnight excludes the **whole day**; any other value excludes only the occurrence starting at that exact instant.
+`getExDates()` returns them. In iCal, `EXDATE` lines are parsed and passed to the rule automatically.
 
 ---
 
@@ -150,12 +177,24 @@ $rule = RecurrenceRule::fromRrule('RRULE:FREQ=DAILY;INTERVAL=2;COUNT=10');
 $rule = RecurrenceRule::fromRrule('FREQ=MONTHLY;BYMONTHDAY=15,-1');
 $rule = RecurrenceRule::fromRrule('FREQ=MONTHLY;BYDAY=MO,FR;BYSETPOS=-1'); // last Mon or Fri
 $rule = RecurrenceRule::fromRrule('FREQ=WEEKLY;BYDAY=MO;WKST=SU');
+$rule = RecurrenceRule::fromRrule('FREQ=MONTHLY;BYDAY=1MO,1FR');            // several ordinals
+$rule = RecurrenceRule::fromRrule('FREQ=DAILY;BYHOUR=9,17;BYMINUTE=0');     // twice a day
+$rule = RecurrenceRule::fromRrule('FREQ=WEEKLY;UNTIL=20251231T235959Z');    // exact UTC instant
 ```
 
 The `RRULE:` prefix is optional.
 
-Supported parts: `FREQ`, `INTERVAL`, `COUNT`, `UNTIL`, `BYDAY` (plain and nth-weekday),
-`BYMONTH`, `BYMONTHDAY` (incl. negative), `BYSETPOS`, `WKST`.
+Supported parts: `FREQ` (`SECONDLY`, `MINUTELY`, `HOURLY`, `DAILY`, `WEEKLY`, `MONTHLY`, `YEARLY`),
+`INTERVAL`, `COUNT`, `UNTIL` (DATE = whole day inclusive, or an exact UTC instant), `BYSECOND`, `BYMINUTE`,
+`BYHOUR`, `BYDAY` (plain and ordinal, e.g. `1MO`, `-1FR`, `+2TU`, several per rule), `BYMONTHDAY` (incl. negative),
+`BYYEARDAY`, `BYWEEKNO`, `BYMONTH`, `BYSETPOS`, `WKST`. All examples from RFC 5545 §3.8.5.3 are covered by the test suite.
+
+Malformed or invalid rules (unknown `FREQ`, `INTERVAL=0`, `COUNT=0`, `BYMONTH=13`, …) throw `InvalidArgumentException`.
+
+Getters: `getFrequency()`, `getInterval()`, `getCount()`, `getUntil()`, `isUntilDate()`, `getByDay()`,
+`getByDayRules()` (all BYDAY entries as `[ordinal, DayName]`, ordinal 0 = every such weekday), `getByMonth()`,
+`getByMonthDay()`, `getByYearDay()`, `getByWeekNo()`, `getByHour()`, `getByMinute()`, `getBySecond()`,
+`getBySetPos()`, `getWkst()`, `getExDates()`, `getExtraDates()`.
 
 ---
 
@@ -165,13 +204,23 @@ Supported parts: `FREQ`, `INTERVAL`, `COUNT`, `UNTIL`, `BYDAY` (plain and nth-we
 
 ```php
 $occurrences = $rule->expand(
-    from: new DateTimeImmutable('2024-11-01'),
-    to:   new DateTimeImmutable('2024-11-30'),
-); // → list<DateTimeImmutable>
+    from:    new DateTimeImmutable('2024-11-01'),
+    to:      new DateTimeImmutable('2024-11-30'),
+    dtStart: new DateTimeImmutable('2024-09-02 09:30', new DateTimeZone('Europe/Bratislava')),
+); // → list<DateTimeImmutable>, sorted
 ```
 
-Only dates within `[from, to]` are returned. `COUNT` and `UNTIL` bounds are respected.
-RDATE extra dates are merged in after RRULE expansion.
+The series is **anchored at DTSTART**: `COUNT`, `INTERVAL` and the implicit defaults (the weekday for
+`WEEKLY`, the day of month for `MONTHLY`, month + day for `YEARLY`) are all derived from `$dtStart`, and
+every returned occurrence carries DTSTART's time of day and timezone. When `$dtStart` is omitted, the series
+is anchored at midnight of `$from` — fine for rule-only use, but pass the real DTSTART whenever the rule
+belongs to an event (otherwise `COUNT=10` counts from `$from`, not from the event's first occurrence).
+
+Occurrences starting within the days `[from, to]` (both inclusive) are returned. `COUNT` and `UNTIL` bounds are respected.
+RDATE extra dates are merged in after RRULE expansion, EXDATEs removed.
+
+As a guard against hostile feeds (e.g. `FREQ=SECONDLY` over decades), one `expand()` call examines at most
+`RecurrenceRule::MAX_ITERATIONS` (500 000) periods; an expansion that hits the limit is truncated.
 
 ---
 
@@ -184,6 +233,15 @@ $rrule = $rule->toRruleString();
 // 'FREQ=WEEKLY;BYDAY=MO;WKST=SU'
 
 $rule2 = RecurrenceRule::fromRrule($rrule); // round-trip safe
+```
+
+Pass the series' DTSTART (and whether it is a DATE value) so `UNTIL` is written in the value type RFC 5545
+requires — a DATE for all-day series, a UTC DATE-TIME otherwise:
+
+```php
+// $rule = RecurrenceRule::weekly()->until(new DateTimeImmutable('2024-12-31')) — a DATE UNTIL
+$rule->toRruleString($dtStart);                       // ...;UNTIL=20241231T225959Z (DTSTART in Europe/Bratislava)
+$rule->toRruleString($dtStart, dtStartIsDate: true);  // ...;UNTIL=20241231
 ```
 
 This is the same format used in iCal files. See [docs/ical.md](ical.md) for the full integration.
@@ -201,13 +259,15 @@ class RecurringEventLoader implements DayDataLoaderInterface
 
     public function __construct(private array $rules) {}
 
-    public function load(DateTimeImmutable $from, DateTimeImmutable $to): void
+    public function load(DateTimeImmutable $from, DateTimeImmutable $to): static
     {
-        foreach ($this->rules as ['rule' => $rule, 'title' => $title]) {
-            foreach ($rule->expand($from, $to) as $date) {
-                $this->byDate[$date->format('Y-m-d')][] = ['title' => $title];
+        $loaded = clone $this; // immutable style — return a new, populated instance
+        foreach ($this->rules as ['rule' => $rule, 'start' => $start, 'title' => $title]) {
+            foreach ($rule->expand($from, $to, $start) as $occurrence) {
+                $loaded->byDate[$occurrence->format('Y-m-d')][] = ['title' => $title, 'time' => $occurrence];
             }
         }
+        return $loaded;
     }
 
     public function getData(DateTimeImmutable $date): array
