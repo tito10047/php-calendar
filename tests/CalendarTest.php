@@ -93,13 +93,16 @@ class CalendarTest extends TestCase
         $calendar = new Calendar(new DateTimeImmutable('2024-11-01'), CalendarType::Monthly);
         $calendar = $calendar->disableWeek(45);
 
-        foreach ($calendar->getDaysTable() as $weekNum => $week) {
+        $checked = 0;
+        foreach ($calendar->getDaysTable() as $weekKey => $week) {
             foreach ($week as $day) {
-                if ($weekNum === 45) {
-                    $this->assertFalse($day->enabled, "Week 45 day {$day->date->format('Y-m-d')} should be disabled");
+                $this->assertSame($weekKey !== 202445, $day->enabled, "Only week 45 day {$day->date->format('Y-m-d')} should be disabled");
+                if ($weekKey % 100 === 45) {
+                    $checked++;
                 }
             }
         }
+        $this->assertSame(7, $checked);
     }
 
     public function testGetDisabledDays(): void

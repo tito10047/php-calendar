@@ -26,15 +26,17 @@ final class Attendee
         return new self(email: $email, name: $name, role: 'OPT-PARTICIPANT');
     }
 
+    /** Unfolded ATTENDEE content line. All values are escaped/quoted — safe for untrusted input. */
     public function toIcalLine(): string
     {
-        $params = 'ROLE=' . $this->role . ';PARTSTAT=' . $this->partStat;
+        $params = 'ROLE=' . ICalFormatter::token($this->role, 'REQ-PARTICIPANT')
+            . ';PARTSTAT=' . ICalFormatter::token($this->partStat, 'NEEDS-ACTION');
         if ($this->rsvp) {
             $params .= ';RSVP=TRUE';
         }
         if ($this->name !== null) {
-            $params .= ';CN=' . $this->name;
+            $params .= ';CN=' . ICalFormatter::param($this->name);
         }
-        return 'ATTENDEE;' . $params . ':mailto:' . $this->email;
+        return 'ATTENDEE;' . $params . ':mailto:' . ICalFormatter::value($this->email);
     }
 }

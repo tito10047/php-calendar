@@ -26,6 +26,7 @@ class JsonSerializerTest extends TestCase
         array $categories = [],
         ?EventStatus $status = null,
         ?RecurrenceRule $rrule = null,
+        bool $allDay = false,
     ): ICalEvent {
         return new ICalEvent(
             uid:         $uid,
@@ -38,6 +39,7 @@ class JsonSerializerTest extends TestCase
             color:       $color,
             categories:  $categories,
             status:      $status,
+            allDay:      $allDay,
         );
     }
 
@@ -50,13 +52,13 @@ class JsonSerializerTest extends TestCase
         $this->assertSame('uid-1', $result[0]['id']);
         $this->assertSame('Team meeting', $result[0]['title']);
         $this->assertFalse($result[0]['allDay']);
-        $this->assertSame('2025-06-01T10:00:00', $result[0]['start']);
-        $this->assertSame('2025-06-01T11:00:00', $result[0]['end']);
+        $this->assertSame('2025-06-01T10:00:00+00:00', $result[0]['start']);
+        $this->assertSame('2025-06-01T11:00:00+00:00', $result[0]['end']);
     }
 
     public function testAllDayEvent(): void
     {
-        $event  = $this->makeEvent('uid-2', '2025-06-01', '2025-06-03', 'Holiday');
+        $event  = $this->makeEvent('uid-2', '2025-06-01', '2025-06-03', 'Holiday', allDay: true);
         $result = JsonSerializer::fromEvents([$event])->toArray();
 
         $this->assertTrue($result[0]['allDay']);
@@ -112,8 +114,8 @@ class JsonSerializerTest extends TestCase
         // Mondays in June 2025: 2, 9, 16, 23, 30
         $this->assertCount(5, $result);
         $starts = array_column($result, 'start');
-        $this->assertContains('2025-06-02T09:00:00', $starts);
-        $this->assertContains('2025-06-30T09:00:00', $starts);
+        $this->assertContains('2025-06-02T09:00:00+00:00', $starts);
+        $this->assertContains('2025-06-30T09:00:00+00:00', $starts);
     }
 
     public function testNullEndProducesNullInOutput(): void
@@ -160,7 +162,7 @@ class JsonSerializerTest extends TestCase
         // Simulate a FullCalendar-ready feed with multiple events
         $events = [
             $this->makeEvent('ev-1', '2025-06-10T09:00:00Z', '2025-06-10T10:00:00Z', 'Meeting', '#3498db'),
-            $this->makeEvent('ev-2', '2025-06-15', '2025-06-17', 'Conference'),
+            $this->makeEvent('ev-2', '2025-06-15', '2025-06-17', 'Conference', allDay: true),
         ];
 
         $json    = JsonSerializer::fromEvents($events)->toJson();

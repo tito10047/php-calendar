@@ -5,13 +5,21 @@ on: [push, pull_request]
 permissions:
   contents: read
 
+# The library ships without composer.lock (it is resolved by the consuming project), so every job
+# resolves dependencies with `composer update`. The "lowest" job guards the lower version bounds.
+
 jobs:
   tests:
-    name: Tests (PHP ${{ matrix.php }})
+    name: Tests (PHP ${{ matrix.php }}, ${{ matrix.deps }} deps)
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         php: ['8.2', '8.3', '8.4', '8.5']
+        deps: ['highest']
+        include:
+          - php: '8.2'
+            deps: 'lowest'
     steps:
       - uses: actions/checkout@v4
 
@@ -19,29 +27,38 @@ jobs:
         uses: shivammathur/setup-php@v2
         with:
           php-version: ${{ matrix.php }}
-          extensions: mbstring, xml, ctype, iconv, intl
-          coverage: pcov
+          extensions: mbstring, xml, dom, ctype, iconv, intl
+          coverage: ${{ matrix.php == '8.3' && matrix.deps == 'highest' && 'pcov' || 'none' }}
+
+      - name: Get Composer cache directory
+        id: composer-cache
+        run: echo "dir=$(composer config cache-files-dir)" >> "$GITHUB_OUTPUT"
 
       - name: Cache Composer dependencies
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
-          path: $(composer config cache-files-dir)
-          key: ${{ runner.os }}-composer-${{ matrix.php }}-${{ hashFiles('composer.json') }}
-          restore-keys: ${{ runner.os }}-composer-
+          path: ${{ steps.composer-cache.outputs.dir }}
+          key: ${{ runner.os }}-composer-${{ matrix.php }}-${{ matrix.deps }}-${{ hashFiles('composer.json') }}
+          restore-keys: ${{ runner.os }}-composer-${{ matrix.php }}-${{ matrix.deps }}-
 
       - name: Install dependencies
-        run: composer update --prefer-stable --prefer-dist --no-interaction
+        run: composer update --prefer-stable --prefer-dist --no-interaction --no-progress ${{ matrix.deps == 'lowest' && '--prefer-lowest' || '' }}
 
       - name: Run tests
+        if: ${{ !(matrix.php == '8.3' && matrix.deps == 'highest') }}
+        run: vendor/bin/phpunit
+
+      - name: Run tests with coverage
+        if: ${{ matrix.php == '8.3' && matrix.deps == 'highest' }}
         run: vendor/bin/phpunit --coverage-clover build/reports/clover.xml
 
       - name: Upload coverage to Coveralls
-        if: matrix.php == '8.3'
-        env:
-          COVERALLS_REPO_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          composer global require php-coveralls/php-coveralls
-          php-coveralls --coverage_clover=build/reports/clover.xml --json_path=build/reports/coveralls-upload.json -v
+        if: ${{ matrix.php == '8.3' && matrix.deps == 'highest' }}
+        uses: coverallsapp/github-action@v2
+        with:
+          file: build/reports/clover.xml
+          format: clover
+          fail-on-error: false
 
   static-analysis:
     name: PHPStan
@@ -53,21 +70,25 @@ jobs:
         uses: shivammathur/setup-php@v2
         with:
           php-version: '8.3'
-          extensions: mbstring, xml, ctype, iconv, intl
+          extensions: mbstring, xml, dom, ctype, iconv, intl
           coverage: none
 
+      - name: Get Composer cache directory
+        id: composer-cache
+        run: echo "dir=$(composer config cache-files-dir)" >> "$GITHUB_OUTPUT"
+
       - name: Cache Composer dependencies
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
-          path: $(composer config cache-files-dir)
-          key: ${{ runner.os }}-composer-8.3-${{ hashFiles('composer.json') }}
-          restore-keys: ${{ runner.os }}-composer-
+          path: ${{ steps.composer-cache.outputs.dir }}
+          key: ${{ runner.os }}-composer-8.3-highest-${{ hashFiles('composer.json') }}
+          restore-keys: ${{ runner.os }}-composer-8.3-highest-
 
       - name: Install dependencies
-        run: composer install --prefer-dist --no-interaction
+        run: composer update --prefer-stable --prefer-dist --no-interaction --no-progress
 
       - name: Run PHPStan
-        run: vendor/bin/phpstan analyse
+        run: vendor/bin/phpstan analyse --no-progress
 
   code-style:
     name: PHP CS Fixer
@@ -78,19 +99,24 @@ jobs:
       - name: Setup PHP
         uses: shivammathur/setup-php@v2
         with:
-          php-version: '8.3'
+          # Run on the minimum supported version so fixes never introduce newer syntax
+          php-version: '8.2'
           extensions: mbstring, xml
           coverage: none
 
+      - name: Get Composer cache directory
+        id: composer-cache
+        run: echo "dir=$(composer config cache-files-dir)" >> "$GITHUB_OUTPUT"
+
       - name: Cache Composer dependencies
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
-          path: $(composer config cache-files-dir)
-          key: ${{ runner.os }}-composer-8.3-${{ hashFiles('composer.json') }}
-          restore-keys: ${{ runner.os }}-composer-
+          path: ${{ steps.composer-cache.outputs.dir }}
+          key: ${{ runner.os }}-composer-8.2-highest-${{ hashFiles('composer.json') }}
+          restore-keys: ${{ runner.os }}-composer-8.2-highest-
 
       - name: Install dependencies
-        run: composer install --prefer-dist --no-interaction
+        run: composer update --prefer-stable --prefer-dist --no-interaction --no-progress
 
       - name: Check code style
         run: vendor/bin/php-cs-fixer check --diff

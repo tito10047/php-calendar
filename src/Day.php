@@ -24,6 +24,23 @@ final class Day
     ) {
     }
 
+    /** ISO 8601 week number (1–53). */
+    public function getIsoWeek(): int
+    {
+        return (int) $this->date->format('W');
+    }
+
+    /** ISO 8601 week-numbering year (may differ from the calendar year around New Year). */
+    public function getIsoWeekYear(): int
+    {
+        return (int) $this->date->format('o');
+    }
+
+    public function getDayName(): Enum\DayName
+    {
+        return Enum\DayName::fromDate($this->date);
+    }
+
     /**
      * @param array<mixed> $data
      */

@@ -18,6 +18,7 @@ use Tito10047\Calendar\Recurrence\RecurrenceRule;
  * P1 fields: alarms, organizer, organizerName, attendees
  * P2 fields: extensionProperties (X-*), transp, classification, priority,
  *            dtStamp, created, lastModified, sequence, recurrenceId, modifiedOccurrences
+ * v3 fields: allDay (DATE-valued DTSTART), thisAndFuture (RECURRENCE-ID;RANGE=THISANDFUTURE)
  */
 final class ICalEvent
 {
@@ -59,6 +60,10 @@ final class ICalEvent
         public readonly int $sequence = 0,
         public readonly ?DateTimeImmutable $recurrenceId = null,
         public readonly array $modifiedOccurrences = [],
+        // All-day (DTSTART;VALUE=DATE) event — dtEnd, when set, is the exclusive end date
+        public readonly bool $allDay = false,
+        // RECURRENCE-ID;RANGE=THISANDFUTURE — this override also applies to all later instances
+        public readonly bool $thisAndFuture = false,
     ) {
     }
 
@@ -68,79 +73,99 @@ final class ICalEvent
     }
 
     /**
-     * Expand to concrete occurrence dates within [from, to].
-     * Overridden occurrences (RECURRENCE-ID) are excluded — use expandOccurrences() for full objects.
+     * Exclusive end of the event starting at $start (the DTSTART by default), or null when the
+     * event has no DTEND/DURATION. All-day durations are nominal (whole days), timed durations
+     * are exact (elapsed seconds), per RFC 5545 §3.3.6.
+     */
+    public function getEnd(?DateTimeImmutable $start = null): ?DateTimeImmutable
+    {
+        if ($this->dtEnd === null) {
+            return null;
+        }
+        if ($start === null) {
+            return $this->dtEnd;
+        }
+        if ($this->allDay) {
+            $days = (int) $this->dtStart->setTime(0, 0, 0)->diff($this->dtEnd->setTime(0, 0, 0))->format('%r%a');
+            return $start->modify("{$days} days");
+        }
+        return $start->setTimestamp($start->getTimestamp() + $this->dtEnd->getTimestamp() - $this->dtStart->getTimestamp());
+    }
+
+    /**
+     * Start times of every instance that overlaps the days [from, to] (both inclusive).
+     *
+     * Includes recurring occurrences, RDATEs and RECURRENCE-ID overrides (at their moved-to
+     * time); EXDATEs are removed. Instances that started before $from but are still running
+     * are included. Use expandOccurrences() to get the full per-instance ICalEvent objects.
+     *
+     * Day boundaries are taken in $from's timezone for timed events and in the event's own
+     * timezone for all-day (DATE) events, so an all-day event always lands on its calendar date.
      *
      * @return list<DateTimeImmutable>
      */
     public function occurrences(DateTimeImmutable $from, DateTimeImmutable $to): array
     {
+        return array_map(static fn (ICalEvent $e) => $e->dtStart, $this->expandOccurrences($from, $to));
+    }
+
+    /**
+     * Expand to one ICalEvent per instance overlapping the days [from, to] (both inclusive).
+     *
+     * Generated instances carry the instance's own DTSTART/DTEND, have RECURRENCE-ID set to the
+     * original start and no RRULE of their own. Modified occurrences (RECURRENCE-ID, including
+     * RANGE=THISANDFUTURE) replace their base occurrence.
+     *
+     * @return list<ICalEvent> sorted by start
+     */
+    public function expandOccurrences(DateTimeImmutable $from, DateTimeImmutable $to): array
+    {
+        [$rangeStart, $rangeEnd] = $this->rangeBounds($from, $to);
+
         if ($this->rrule === null) {
-            $start = $this->dtStart->setTime(0, 0, 0);
-            if ($start >= $from->setTime(0, 0, 0) && $start <= $to->setTime(23, 59, 59)) {
-                return [$start];
-            }
-            return [];
+            return $this->overlaps($this, $rangeStart, $rangeEnd) ? [$this] : [];
         }
+
+        // Look back far enough to catch instances that started before the range but still run into it
+        $span       = $this->getEnd($this->dtStart) ?? $this->dtStart;
+        $lookBack   = $rangeStart->setTimestamp($rangeStart->getTimestamp() - max(0, $span->getTimestamp() - $this->dtStart->getTimestamp()));
+        $expandFrom = $lookBack->setTimezone($rangeStart->getTimezone())->setTime(0, 0, 0);
+        $expandTo   = $rangeEnd->modify('-1 second');
 
         $rule = $this->rrule;
         if ($this->exDates !== []) {
             $rule = $rule->excluding(...$this->exDates);
         }
-        // Treat overridden occurrences like EXDATE (they'll be added back via expandOccurrences)
-        if ($this->modifiedOccurrences !== []) {
-            foreach (array_keys($this->modifiedOccurrences) as $overriddenKey) {
-                $dt   = DateTimeImmutable::createFromFormat('Y-m-d', $overriddenKey);
-                if ($dt !== false) {
-                    $rule = $rule->excluding($dt);
-                }
-            }
-        }
 
-        return $rule->expand($from, $to);
-    }
+        $futureOverrides = array_values(array_filter(
+            $this->modifiedOccurrences,
+            static fn (ICalEvent $o) => $o->thisAndFuture && $o->recurrenceId !== null,
+        ));
+        usort($futureOverrides, static fn (ICalEvent $a, ICalEvent $b) => $a->recurrenceId <=> $b->recurrenceId);
 
-    /**
-     * Expand to full ICalEvent objects for each occurrence in [from, to].
-     * Modified occurrences (RECURRENCE-ID) replace their base occurrence with the override event.
-     *
-     * @return list<ICalEvent>
-     */
-    public function expandOccurrences(DateTimeImmutable $from, DateTimeImmutable $to): array
-    {
-        $dates  = $this->occurrences($from, $to);
         $result = [];
-        $tz     = $this->dtStart->getTimezone();
-
-        foreach ($dates as $date) {
-            $key = $date->format('Y-m-d');
+        $used   = [];
+        foreach ($rule->expand($expandFrom, $expandTo, $this->dtStart) as $start) {
+            $key = $start->format('Y-m-d');
             if (isset($this->modifiedOccurrences[$key])) {
-                $result[] = $this->modifiedOccurrences[$key];
+                $instance   = $this->modifiedOccurrences[$key];
+                $used[$key] = true;
             } else {
-                // Reconstruct occurrence: keep original time, shift to occurrence date, preserve TZ
-                $newStart = $date->setTimezone($tz)->setTime(
-                    (int) $this->dtStart->format('H'),
-                    (int) $this->dtStart->format('i'),
-                    (int) $this->dtStart->format('s'),
-                );
-                $newEnd = $this->dtEnd !== null
-                    ? $newStart->add($this->dtStart->diff($this->dtEnd))
-                    : null;
-                $result[] = $this->withDates($newStart, $newEnd);
+                $instance = $this->instanceAt($start, $futureOverrides);
+            }
+            if ($this->overlaps($instance, $rangeStart, $rangeEnd)) {
+                $result[] = $instance;
             }
         }
 
-        // Add override events whose moved-to date falls in range but whose original date is outside
-        foreach ($this->modifiedOccurrences as $override) {
-            $os = $override->dtStart->setTime(0, 0, 0);
-            if ($os >= $from->setTime(0, 0, 0) && $os <= $to->setTime(23, 59, 59)) {
-                if (!in_array($override, $result, true)) {
-                    $result[] = $override;
-                }
+        // Overrides moved into the range from an original date outside it
+        foreach ($this->modifiedOccurrences as $key => $override) {
+            if (!isset($used[$key]) && $this->overlaps($override, $rangeStart, $rangeEnd)) {
+                $result[] = $override;
             }
         }
 
-        usort($result, fn (ICalEvent $a, ICalEvent $b) => $a->dtStart <=> $b->dtStart);
+        usort($result, static fn (ICalEvent $a, ICalEvent $b) => $a->dtStart <=> $b->dtStart);
 
         return $result;
     }
@@ -170,13 +195,20 @@ final class ICalEvent
 
     /**
      * Attach a RECURRENCE-ID override to this master event.
-     * $originalDate is the Y-m-d of the occurrence being replaced.
+     * $originalDate is the original start of the occurrence being replaced; overrides are keyed
+     * by its calendar date in the master event's timezone.
      */
     public function withModifiedOccurrence(DateTimeImmutable $originalDate, ICalEvent $replacement): self
     {
-        $overrides                                    = $this->modifiedOccurrences;
-        $overrides[$originalDate->format('Y-m-d')] = $replacement;
+        $overrides                                  = $this->modifiedOccurrences;
+        $overrides[$this->occurrenceKey($originalDate)] = $replacement;
         return $this->clone(modifiedOccurrences: $overrides);
+    }
+
+    /** Copy with a different start / end (e.g. converted to another timezone). */
+    public function withDates(DateTimeImmutable $dtStart, ?DateTimeImmutable $dtEnd): self
+    {
+        return $this->clone(dtStart: $dtStart, dtEnd: $dtEnd);
     }
 
     public function getExtendedProperty(string $name): ?string
@@ -204,6 +236,7 @@ final class ICalEvent
             'classification'     => $this->classification?->value,
             'priority'           => $this->priority,
             'sequence'           => $this->sequence,
+            'allDay'             => $this->allDay,
             'dtStart'            => $this->dtStart->format('Y-m-d H:i:s'),
             'dtEnd'              => $this->dtEnd?->format('Y-m-d H:i:s'),
             'dtStamp'            => $this->dtStamp?->format('Y-m-d H:i:s'),
@@ -213,6 +246,7 @@ final class ICalEvent
             'exDates'            => array_map(fn ($d) => $d->format('Y-m-d H:i:s'), $this->exDates),
             'organizer'          => $this->organizer,
             'organizerName'      => $this->organizerName,
+            'recurrenceId'       => $this->recurrenceId?->format('Y-m-d H:i:s'),
             'extensionProperties' => $this->extensionProperties,
         ];
     }
@@ -286,11 +320,86 @@ final class ICalEvent
             sequence:             $sequence ?? $this->sequence,
             recurrenceId:         $recurrenceId === 'KEEP' ? $this->recurrenceId : $recurrenceId,
             modifiedOccurrences:  $modifiedOccurrences ?? $this->modifiedOccurrences,
+            allDay:               $this->allDay,
+            thisAndFuture:        $this->thisAndFuture,
         );
     }
 
-    private function withDates(DateTimeImmutable $newStart, ?DateTimeImmutable $newEnd): self
+    /**
+     * Build the generated instance starting at $start, applying the latest RANGE=THISANDFUTURE
+     * override that precedes it (if any).
+     *
+     * @param list<ICalEvent> $futureOverrides sorted by recurrenceId
+     */
+    private function instanceAt(DateTimeImmutable $start, array $futureOverrides): self
     {
-        return $this->clone(dtStart: $newStart, dtEnd: $newEnd);
+        $template = null;
+        foreach ($futureOverrides as $override) {
+            if ($override->recurrenceId !== null && $override->recurrenceId <= $start) {
+                $template = $override;
+            }
+        }
+
+        if ($template === null || $template->recurrenceId === null) {
+            return $this->clone(
+                dtStart:             $start,
+                dtEnd:               $this->getEnd($start),
+                rrule:               null,
+                exDates:             [],
+                recurrenceId:        $start,
+                modifiedOccurrences: [],
+            );
+        }
+
+        // Shift by the same offset the THISANDFUTURE override applied to its own instance
+        $shifted = $template->allDay
+            ? $start->modify((int) $template->recurrenceId->setTime(0, 0, 0)->diff($template->dtStart->setTime(0, 0, 0))->format('%r%a') . ' days')
+            : $start->setTimestamp($start->getTimestamp() + $template->dtStart->getTimestamp() - $template->recurrenceId->getTimestamp());
+
+        return $template->clone(
+            dtStart:             $shifted,
+            dtEnd:               $template->getEnd($shifted),
+            rrule:               null,
+            exDates:             [],
+            recurrenceId:        $start,
+            modifiedOccurrences: [],
+        );
+    }
+
+    /**
+     * Day range [start, end) for occurrence queries. All-day events use wall-clock days in the
+     * event's own timezone so they never drift to a neighbouring date.
+     *
+     * @return array{DateTimeImmutable, DateTimeImmutable}
+     */
+    private function rangeBounds(DateTimeImmutable $from, DateTimeImmutable $to): array
+    {
+        if ($this->allDay) {
+            $tz    = $this->dtStart->getTimezone();
+            $start = new DateTimeImmutable($from->format('Y-m-d'), $tz);
+            $end   = (new DateTimeImmutable($to->format('Y-m-d'), $tz))->modify('+1 day');
+            return [$start, $end];
+        }
+        return [$from->setTime(0, 0, 0), $to->setTime(0, 0, 0)->modify('+1 day')];
+    }
+
+    private function overlaps(ICalEvent $instance, DateTimeImmutable $rangeStart, DateTimeImmutable $rangeEnd): bool
+    {
+        [$start, $end] = [$instance->dtStart, $instance->getEnd($instance->dtStart)];
+        if ($instance->allDay !== $this->allDay) {
+            // Override switched between all-day and timed — compare on the override's own terms
+            [$rangeStart, $rangeEnd] = $instance->rangeBounds($rangeStart, $rangeEnd->modify('-1 second'));
+        }
+        if ($end === null || $end <= $start) {
+            return $start >= $rangeStart && $start < $rangeEnd;
+        }
+        return $start < $rangeEnd && $end > $rangeStart;
+    }
+
+    private function occurrenceKey(DateTimeImmutable $originalStart): string
+    {
+        return $this->allDay
+            ? $originalStart->format('Y-m-d')
+            : $originalStart->setTimezone($this->dtStart->getTimezone())->format('Y-m-d');
     }
 }

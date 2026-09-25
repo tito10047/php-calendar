@@ -47,11 +47,22 @@ interface CalendarInterface
 
     public function isLastDay(\DateTimeInterface|Day $day): bool;
 
+    /** First day of the displayed period (month for month grids, otherwise the first grid day). */
+    public function isFirstDayOfPeriod(\DateTimeInterface|Day $day): bool;
+
+    /** Last day of the displayed period (month for month grids, otherwise the last grid day). */
+    public function isLastDayOfPeriod(\DateTimeInterface|Day $day): bool;
+
     // -------------------------------------------------------------------------
     // Calendar grid
     // -------------------------------------------------------------------------
 
-    /** @return array<int, array<int, Day>> */
+    /**
+     * Rows keyed by ISO year*100 + ISO week (e.g. 202445), days keyed by ISO weekday (1–7)
+     * in WeekStart order.
+     *
+     * @return array<int, array<int, Day>>
+     */
     public function getDaysTable(): array;
 
     // -------------------------------------------------------------------------
@@ -104,7 +115,8 @@ interface CalendarInterface
     public function disableDaysRange(?DateTimeImmutable $from = null, ?DateTimeImmutable $to = null): self;
 
     /**
-     * Disable all days in the given ISO week number.
+     * Disable all days in the given ISO week number (optionally of a specific ISO year), or —
+     * when $weekNum > 100 — the grid row with that getDaysTable() key (e.g. 202445).
      */
-    public function disableWeek(int $weekNum): self;
+    public function disableWeek(int $weekNum, ?int $year = null): self;
 }
