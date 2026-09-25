@@ -44,7 +44,37 @@ final class CalDavServer
         private readonly string $calendarName = 'Calendar',
         private readonly string $baseUrl = '/caldav/',
         private readonly ?string $calendarDescription = null,
+        /**
+         * The collection's change tag. Null leaves `getctag` out, and a client
+         * then has no way of knowing that nothing changed — it will re-read the
+         * whole calendar on every single sync.
+         */
+        private readonly ?string $ctag = null,
+        private readonly ?string $color = null,
+        private readonly bool $writable = true,
+        private readonly ?string $principalHref = null,
     ) {
+    }
+
+    /**
+     * The server for one collection of a calendar home — what CalDavRouter
+     * builds once it has worked out which calendar the path points at.
+     */
+    public static function forCollection(
+        CalendarCollectionInterface $collection,
+        string $baseUrl,
+        ?string $principalHref = null,
+    ): self {
+        return new self(
+            store: $collection->getStore(),
+            calendarName: $collection->getDisplayName(),
+            baseUrl: $baseUrl,
+            calendarDescription: $collection->getDescription(),
+            ctag: $collection->getCtag(),
+            color: $collection->getColor(),
+            writable: $collection->isWritable(),
+            principalHref: $principalHref,
+        );
     }
 
     // -------------------------------------------------------------------------
@@ -191,6 +221,10 @@ final class CalDavServer
      */
     public function handlePut(string $uid, string $icsBody, array $headers = []): CalDavResponse
     {
+        if (!$this->writable) {
+            return $this->readOnly();
+        }
+
         $current = $this->store->getEvent($uid);
 
         $failed = $this->checkPreconditions($headers, $current);
@@ -225,6 +259,10 @@ final class CalDavServer
      */
     public function handleDelete(string $uid, array $headers = []): CalDavResponse
     {
+        if (!$this->writable) {
+            return $this->readOnly();
+        }
+
         $current = $this->store->getEvent($uid);
         if ($current === null) {
             return new CalDavResponse(404, 'Not Found', 'text/plain');
@@ -238,6 +276,17 @@ final class CalDavServer
         $this->store->deleteEvent($uid);
 
         return new CalDavResponse(204, '');
+    }
+
+    /**
+     * The collection's own properties, as a PROPFIND asked for them — what
+     * CalDavRouter puts into the list of calendars under the calendar home.
+     *
+     * @return list<DavProperty>
+     */
+    public function describeCollection(PropfindRequest $request): array
+    {
+        return $this->selectProperties($request, $this->collectionProperties());
     }
 
     /**
@@ -416,7 +465,64 @@ final class CalDavServer
             );
         }
 
+        // The one property that decides whether a phone syncs a calendar in a
+        // few bytes or downloads a year of days every ten minutes.
+        if ($this->ctag !== null) {
+            $properties[$this->key(Dav::NS_CALENDARSERVER, 'getctag')] = DavProperty::text(
+                Dav::NS_CALENDARSERVER,
+                'getctag',
+                $this->ctag,
+            );
+        }
+
+        if ($this->color !== null) {
+            $properties[$this->key(Dav::NS_APPLE_ICAL, 'calendar-color')] = DavProperty::text(
+                Dav::NS_APPLE_ICAL,
+                'calendar-color',
+                $this->color,
+            );
+        }
+
+        if ($this->principalHref !== null) {
+            foreach (['current-user-principal', 'owner'] as $name) {
+                $properties[$this->key(Dav::NS_DAV, $name)] = DavProperty::structured(
+                    Dav::NS_DAV,
+                    $name,
+                    fn (DOMDocument $doc, DOMElement $element) => $this->appendHref($doc, $element, (string) $this->principalHref),
+                );
+            }
+        }
+
+        // What the client may do here. A read-only collection that says so is
+        // one a client will not offer an "add event" button for, which is a
+        // better answer than a 403 after somebody typed one in.
+        $properties[$this->key(Dav::NS_DAV, 'current-user-privileges')] = DavProperty::structured(
+            Dav::NS_DAV,
+            'current-user-privileges',
+            function (DOMDocument $doc, DOMElement $element): void {
+                $privileges = $this->writable
+                    ? ['read', 'write', 'write-content', 'bind', 'unbind']
+                    : ['read'];
+
+                foreach ($privileges as $privilege) {
+                    $wrapper = $doc->createElementNS(Dav::NS_DAV, 'D:privilege');
+                    $wrapper->appendChild($doc->createElementNS(Dav::NS_DAV, 'D:' . $privilege));
+                    $element->appendChild($wrapper);
+                }
+            },
+        );
+
         return $properties;
+    }
+
+    /**
+     * WebDAV says "a URL" by wrapping it in a href element, never as text.
+     */
+    private function appendHref(DOMDocument $doc, DOMElement $element, string $href): void
+    {
+        $node = $doc->createElementNS(Dav::NS_DAV, 'D:href');
+        $node->appendChild($doc->createTextNode($href));
+        $element->appendChild($node);
     }
 
     /**
@@ -498,6 +604,19 @@ final class CalDavServer
     private function preconditionFailed(): CalDavResponse
     {
         return new CalDavResponse(412, 'Precondition Failed', 'text/plain');
+    }
+
+    /**
+     * A write into a collection that does not take writes. 403 and not 405:
+     * the method is understood here, it is this collection that refuses it.
+     */
+    private function readOnly(): CalDavResponse
+    {
+        return new CalDavResponse(
+            statusCode: 403,
+            body: $this->errorXml(Dav::NS_DAV, 'need-privileges'),
+            headers: ['Allow' => 'OPTIONS, GET, HEAD, PROPFIND, REPORT'],
+        );
     }
 
     /**

@@ -24,6 +24,7 @@ final class MultiStatusBuilder
         Dav::NS_DAV => 'D',
         Dav::NS_CALDAV => 'C',
         Dav::NS_CALENDARSERVER => 'CS',
+        Dav::NS_APPLE_ICAL => 'IC',
     ];
 
     private int $generatedPrefixes = 0;
@@ -41,10 +42,11 @@ final class MultiStatusBuilder
         // character into a numeric entity — a calendar named "Ranná
         // prechádzka" would come back as "Rann&#xE1;".
         $this->doc->loadXML(sprintf(
-            '<?xml version="1.0" encoding="UTF-8"?><D:multistatus xmlns:D="%s" xmlns:C="%s" xmlns:CS="%s"/>',
+            '<?xml version="1.0" encoding="UTF-8"?><D:multistatus xmlns:D="%s" xmlns:C="%s" xmlns:CS="%s" xmlns:IC="%s"/>',
             Dav::NS_DAV,
             Dav::NS_CALDAV,
             Dav::NS_CALENDARSERVER,
+            Dav::NS_APPLE_ICAL,
         ));
 
         $root = $this->doc->documentElement;
