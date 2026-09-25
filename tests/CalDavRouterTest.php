@@ -224,6 +224,27 @@ final class CalDavRouterTest extends TestCase
         self::assertNotNull($this->collection('walk')->getEvent('day-2'));
     }
 
+    public function testAStoreCanRefuseOneWriteWithoutClosingTheCollection(): void
+    {
+        $collection = new RefusingCollection('walk', 'Ranná prechádzka', 'ctag-1');
+        $collection->seed('day-1', $this->event('day-1', '2026-09-25'));
+
+        $router = new CalDavRouter(new InMemoryCalendarHome('jana', 'Jana', [$collection]), '/caldav/');
+
+        $put = $router->handle(
+            'PUT',
+            '/caldav/calendars/jana/walk/day-1.ics',
+            "BEGIN:VEVENT\r\nUID:day-1\r\nDTSTART;VALUE=DATE:20200101\r\nEND:VEVENT",
+        );
+
+        self::assertSame(403, $put->statusCode);
+        self::assertStringContainsString('need-privileges', $put->body);
+
+        $delete = $router->handle('DELETE', '/caldav/calendars/jana/walk/day-1.ics');
+
+        self::assertSame(403, $delete->statusCode);
+    }
+
     public function testOptionsAdvertisesCalDav(): void
     {
         foreach (['/caldav/', '/caldav/principals/jana/', '/caldav/calendars/jana/', '/caldav/calendars/jana/walk/'] as $path) {
@@ -329,7 +350,7 @@ final class InMemoryCalendarHome implements CalendarHomeInterface
 /**
  * One in-memory calendar collection, for tests only.
  */
-final class InMemoryCollection implements CalendarCollectionInterface, CalendarEventStoreInterface
+class InMemoryCollection implements CalendarCollectionInterface, CalendarEventStoreInterface
 {
     /** @var array<string, ICalEvent> */
     private array $events = [];
@@ -401,5 +422,31 @@ final class InMemoryCollection implements CalendarCollectionInterface, CalendarE
             static fn (ICalEvent $event) => ($to === null || $event->dtStart <= $to)
                 && ($from === null || $event->dtEnd === null || $event->dtEnd >= $from),
         ));
+    }
+}
+
+/**
+ * A collection that takes writes in general and refuses this one — the shape
+ * an application has when a resource is read-only or a date is out of range.
+ */
+final class RefusingCollection extends InMemoryCollection
+{
+    /**
+     * Writes refused from outside still have to be arrangeable from inside —
+     * a delete can only be refused if there is something there to delete.
+     */
+    public function seed(string $uid, ICalEvent $event): void
+    {
+        parent::putEvent($uid, $event);
+    }
+
+    public function putEvent(string $uid, ICalEvent $event): void
+    {
+        throw new \Tito10047\Calendar\Server\ForbiddenException('That day cannot be written.');
+    }
+
+    public function deleteEvent(string $uid): void
+    {
+        throw new \Tito10047\Calendar\Server\ForbiddenException('That day cannot be taken back.');
     }
 }

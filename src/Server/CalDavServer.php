@@ -237,7 +237,11 @@ final class CalDavServer
             return new CalDavResponse(400, 'No VEVENT found in request body', 'text/plain');
         }
 
-        $this->store->putEvent($uid, $events[0]);
+        try {
+            $this->store->putEvent($uid, $events[0]);
+        } catch (ForbiddenException $refused) {
+            return $this->refused($refused);
+        }
 
         // The ETag describes what is stored, not what arrived: the store may
         // normalise the event, and a later GET has to hash to the same string.
@@ -273,7 +277,11 @@ final class CalDavServer
             return $failed;
         }
 
-        $this->store->deleteEvent($uid);
+        try {
+            $this->store->deleteEvent($uid);
+        } catch (ForbiddenException $refused) {
+            return $this->refused($refused);
+        }
 
         return new CalDavResponse(204, '');
     }
@@ -604,6 +612,17 @@ final class CalDavServer
     private function preconditionFailed(): CalDavResponse
     {
         return new CalDavResponse(412, 'Precondition Failed', 'text/plain');
+    }
+
+    /**
+     * One resource the store refused, said in the shape a client understands.
+     */
+    private function refused(ForbiddenException $refused): CalDavResponse
+    {
+        return new CalDavResponse(
+            statusCode: 403,
+            body: $this->errorXml($refused->preconditionNamespace, $refused->precondition),
+        );
     }
 
     /**
