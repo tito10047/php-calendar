@@ -347,7 +347,8 @@ final class ICalParser
         $categories = [];
         if (isset($props['CATEGORIES'])) {
             foreach ($props['CATEGORIES'] as $catEntry) {
-                foreach (explode(',', $catEntry['value']) as $cat) {
+                foreach (preg_split('/(?<!\\\\),/', $catEntry['value']) ?: [] as $cat) {
+                    $cat = (string) $this->unescapeText($cat);
                     $cat = trim($cat);
                     if ($cat !== '') {
                         $categories[] = $cat;
@@ -407,9 +408,9 @@ final class ICalParser
             uid:                 $uid,
             dtStart:             $dtStart,
             dtEnd:               $dtEnd,
-            summary:             $this->firstValue($props, 'SUMMARY'),
-            description:         $this->firstValue($props, 'DESCRIPTION'),
-            location:            $this->firstValue($props, 'LOCATION'),
+            summary:             $this->unescapeText($this->firstValue($props, 'SUMMARY')),
+            description:         $this->unescapeText($this->firstValue($props, 'DESCRIPTION')),
+            location:            $this->unescapeText($this->firstValue($props, 'LOCATION')),
             rrule:               $rrule,
             exDates:             $exDates,
             url:                 $this->firstValue($props, 'URL'),
@@ -514,8 +515,8 @@ final class ICalParser
 
         return new ICalTodo(
             uid:             $uid,
-            summary:         $this->firstValue($props, 'SUMMARY'),
-            description:     $this->firstValue($props, 'DESCRIPTION'),
+            summary:         $this->unescapeText($this->firstValue($props, 'SUMMARY')),
+            description:     $this->unescapeText($this->firstValue($props, 'DESCRIPTION')),
             due:             $due,
             dtStart:         $dtStart,
             status:          $this->firstValue($props, 'STATUS') ?? 'NEEDS-ACTION',
@@ -537,8 +538,8 @@ final class ICalParser
         return new VAlarm(
             action:      strtoupper($action),
             trigger:     $trigger,
-            description: $this->firstValue($props, 'DESCRIPTION'),
-            summary:     $this->firstValue($props, 'SUMMARY'),
+            description: $this->unescapeText($this->firstValue($props, 'DESCRIPTION')),
+            summary:     $this->unescapeText($this->firstValue($props, 'SUMMARY')),
         );
     }
 
@@ -548,5 +549,30 @@ final class ICalParser
     private function firstValue(array $props, string $name): ?string
     {
         return isset($props[$name]) ? $props[$name][0]['value'] : null;
+    }
+
+    /**
+     * Undo RFC 5545 §3.3.11 text escaping.
+     *
+     * A DESCRIPTION arrives as one line with \n where the newlines were, and
+     * with commas and semicolons backslashed. Handing that through unchanged
+     * means a note comes back with visible backslashes and a line break that
+     * never happens — and anything reading the first line of a description
+     * reads the whole thing instead.
+     */
+    private function unescapeText(?string $value): ?string
+    {
+        if ($value === null) {
+            return null;
+        }
+
+        return preg_replace_callback(
+            '/\\\\(.)/',
+            static fn (array $match): string => match ($match[1]) {
+                'n', 'N' => "\n",
+                default => $match[1],
+            },
+            $value,
+        ) ?? $value;
     }
 }

@@ -458,4 +458,21 @@ class ICalTest extends TestCase
         $this->assertStringNotContainsString('CATEGORIES:', $ics);
         $this->assertStringNotContainsString('STATUS:', $ics);
     }
+
+    public function testEscapedTextComesBackUnescaped(): void
+    {
+        $ics = (new ICalExporter())
+            ->addEvent(
+                title:       'Beh, 10 km; ráno',
+                from:        new DateTimeImmutable('2026-09-25T06:00:00Z'),
+                description: "10/5\nPrvý raz celá desiatka.",
+                uid:         'walk@budem.sk',
+            )
+            ->export();
+
+        $event = (new ICalParser())->parseString($ics)[0];
+
+        self::assertSame('Beh, 10 km; ráno', $event->summary);
+        self::assertSame("10/5\nPrvý raz celá desiatka.", $event->description);
+    }
 }
