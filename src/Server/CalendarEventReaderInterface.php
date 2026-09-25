@@ -23,11 +23,15 @@ interface CalendarEventReaderInterface
 
     /**
      * Return all events that have at least one occurrence in [$from, $to].
+     * A null boundary means "no limit on that side" — PROPFIND with Depth: 1
+     * asks for the whole collection, because that is what a client syncing for
+     * the first time needs to see.
+     *
      * For recurring events return the master ICalEvent (with RRULE intact),
      * not individual expanded occurrences — CalDAV clients handle their own expansion.
-     * Used by HTTP REPORT (calendar-query).
+     * Used by HTTP REPORT (calendar-query) and PROPFIND.
      *
      * @return list<ICalEvent>
      */
-    public function listEvents(DateTimeImmutable $from, DateTimeImmutable $to): array;
+    public function listEvents(?DateTimeImmutable $from = null, ?DateTimeImmutable $to = null): array;
 }

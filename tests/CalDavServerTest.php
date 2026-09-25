@@ -30,7 +30,7 @@ class CalDavServerTest extends TestCase
         $r = $this->server->handleOptions();
 
         self::assertSame(200, $r->statusCode);
-        self::assertSame('1, 2, calendar-access', $r->headers['DAV']);
+        self::assertSame('1, 2, 3, calendar-access', $r->headers['DAV']);
         self::assertStringContainsString('PROPFIND', $r->headers['Allow']);
     }
 
@@ -44,7 +44,7 @@ class CalDavServerTest extends TestCase
 
         self::assertSame(207, $r->statusCode);
         self::assertStringContainsString('Test Calendar', $r->body);
-        self::assertStringContainsString('<cal:calendar/>', $r->body);
+        self::assertStringContainsString('<C:calendar/>', $r->body);
         self::assertStringContainsString('/caldav/', $r->body);
     }
 
@@ -302,12 +302,12 @@ final class InMemoryEventStore implements CalendarEventStoreInterface
     }
 
     /** @return list<ICalEvent> */
-    public function listEvents(DateTimeImmutable $from, DateTimeImmutable $to): array
+    public function listEvents(?DateTimeImmutable $from = null, ?DateTimeImmutable $to = null): array
     {
         return array_values(array_filter(
             $this->events,
-            fn (ICalEvent $e) => $e->dtStart <= $to
-                && ($e->dtEnd === null || $e->dtEnd >= $from),
+            fn (ICalEvent $e) => ($to === null || $e->dtStart <= $to)
+                && ($from === null || $e->dtEnd === null || $e->dtEnd >= $from),
         ));
     }
 }

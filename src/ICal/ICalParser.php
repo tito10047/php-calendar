@@ -289,6 +289,12 @@ final class ICalParser
             return null;
         }
 
+        // An event is all-day when its DTSTART is a DATE value — either declared
+        // (VALUE=DATE) or recognisable by shape. Clients disagree on sending the
+        // parameter; the shape never lies.
+        $allDay = strtoupper($dtStartEntry['params']['VALUE'] ?? '') === 'DATE'
+            || preg_match('/^\d{8}$/', trim($dtStartEntry['value'])) === 1;
+
         $dtEnd = null;
         if (isset($props['DTEND'])) {
             $e = $props['DTEND'][0];
@@ -423,6 +429,7 @@ final class ICalParser
             lastModified:        $lastModEntry !== null ? $this->parseDateTime($lastModEntry['value'], $lastModEntry['params'], $tzMap) : null,
             sequence:            (int) ($this->firstValue($props, 'SEQUENCE') ?? 0),
             recurrenceId:        $recurrenceEntry !== null ? $this->parseDateTime($recurrenceEntry['value'], $recurrenceEntry['params'], $tzMap) : null,
+            allDay:              $allDay,
         );
     }
 
@@ -436,9 +443,11 @@ final class ICalParser
     {
         $value = trim($value);
 
-        // Date-only: 20241101
+        // Date-only: 20241101 — the leading "!" resets the time, otherwise
+        // createFromFormat() fills it from the current clock and a date-only
+        // value silently carries the hour the import happened to run at.
         if (preg_match('/^\d{8}$/', $value)) {
-            return DateTimeImmutable::createFromFormat('Ymd', $value, new DateTimeZone('UTC')) ?: null;
+            return DateTimeImmutable::createFromFormat('!Ymd', $value, new DateTimeZone('UTC')) ?: null;
         }
 
         // DateTime with Z suffix (UTC): 20241101T120000Z
