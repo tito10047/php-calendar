@@ -245,6 +245,40 @@ final class CalDavRouterTest extends TestCase
         self::assertSame(403, $delete->statusCode);
     }
 
+    // -------------------------------------------------------------------------
+    // What stricter clients ask for
+    // -------------------------------------------------------------------------
+
+    public function testProppatchIsAnsweredRatherThanRefusedAsAMethod(): void
+    {
+        $response = $this->router->handle('PROPPATCH', '/caldav/calendars/jana/walk/', implode("\n", [
+            '<?xml version="1.0" encoding="UTF-8"?>',
+            '<D:propertyupdate xmlns:D="DAV:" xmlns:IC="http://apple.com/ns/ical/">',
+            '  <D:set><D:prop><IC:calendar-color>#ff0000</IC:calendar-color><D:displayname>Mine now</D:displayname></D:prop></D:set>',
+            '</D:propertyupdate>',
+        ]));
+
+        $xpath = $this->xpath($response->body);
+
+        self::assertSame(207, $response->statusCode, 'A 405 here aborts Apple Calendar\'s account setup.');
+        self::assertSame(1, $this->nodeCount($xpath, '//D:propstat[D:status[contains(., "404")]]/D:prop/IC:calendar-color'));
+        self::assertSame(1, $this->nodeCount($xpath, '//D:propstat[D:status[contains(., "404")]]/D:prop/D:displayname'));
+    }
+
+    public function testThePrincipalSaysWhereEveryPrincipalLives(): void
+    {
+        $response = $this->router->handle(
+            'PROPFIND',
+            '/caldav/principals/jana/',
+            $this->propfind(['D:principal-collection-set', 'C:calendar-user-type']),
+        );
+
+        $xpath = $this->xpath($response->body);
+
+        self::assertSame('/caldav/principals/', $this->nodeText($xpath, '//D:principal-collection-set/D:href'));
+        self::assertSame('INDIVIDUAL', $this->nodeText($xpath, '//C:calendar-user-type'));
+    }
+
     public function testOptionsAdvertisesCalDav(): void
     {
         foreach (['/caldav/', '/caldav/principals/jana/', '/caldav/calendars/jana/', '/caldav/calendars/jana/walk/'] as $path) {

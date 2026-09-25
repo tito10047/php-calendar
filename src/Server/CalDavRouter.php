@@ -50,6 +50,14 @@ final class CalDavRouter
 
         $depth = $this->depthOf($headers);
 
+        // Apple Calendar tries to write the colour and the display name back
+        // as part of setting an account up. The answer is "no", but it has to
+        // be a WebDAV answer: a 405 aborts the whole setup, a 207 with a 403
+        // for each property is read as "this calendar is not mine to rename".
+        if ($method === 'PROPPATCH') {
+            return $this->handleProppatch($body, $path);
+        }
+
         return match (true) {
             $segments === [] => $this->handleRoot($method, $body),
             $segments[0] === 'principals' => $this->handlePrincipal($method, $segments, $body),
@@ -99,6 +107,7 @@ final class CalDavRouter
                 $this->key(Dav::NS_DAV, 'current-user-principal') => $this->hrefProperty('current-user-principal', $this->principalHref()),
                 $this->key(Dav::NS_DAV, 'principal-URL') => $this->hrefProperty('principal-URL', $this->principalHref()),
                 $this->key(Dav::NS_CALDAV, 'calendar-home-set') => $this->hrefProperty('calendar-home-set', $this->homeHref(), Dav::NS_CALDAV),
+                $this->key(Dav::NS_DAV, 'principal-collection-set') => $this->hrefProperty('principal-collection-set', $this->basePath . 'principals/'),
             ]),
         );
 
@@ -140,6 +149,8 @@ final class CalDavRouter
                 $this->key(Dav::NS_CALDAV, 'calendar-home-set') => $this->hrefProperty('calendar-home-set', $this->homeHref(), Dav::NS_CALDAV),
                 $this->key(Dav::NS_CALDAV, 'calendar-user-address-set') => $this->hrefProperty('calendar-user-address-set', $this->principalHref(), Dav::NS_CALDAV),
                 $this->key(Dav::NS_CALDAV, 'supported-calendar-component-set') => DavProperty::notFound(Dav::NS_CALDAV, 'supported-calendar-component-set'),
+                $this->key(Dav::NS_DAV, 'principal-collection-set') => $this->hrefProperty('principal-collection-set', $this->basePath . 'principals/'),
+                $this->key(Dav::NS_CALDAV, 'calendar-user-type') => DavProperty::text(Dav::NS_CALDAV, 'calendar-user-type', 'INDIVIDUAL'),
             ]),
         );
 
@@ -228,6 +239,57 @@ final class CalDavRouter
         }
 
         return $this->multistatus($builder);
+    }
+
+    /**
+     * Nothing here is writable by a client, and saying so per property is what
+     * keeps a client from deciding the server is broken.
+     */
+    private function handleProppatch(string $body, string $path): CalDavResponse
+    {
+        $builder = new MultiStatusBuilder();
+        $properties = [];
+
+        foreach ($this->proppatchProperties($body) as $property) {
+            $properties[] = DavProperty::notFound($property['namespace'], $property['name']);
+        }
+
+        $builder->addResponse($path, $properties);
+
+        return $this->multistatus($builder);
+    }
+
+    /**
+     * @return list<array{namespace: string, name: string}>
+     */
+    private function proppatchProperties(string $body): array
+    {
+        $doc = new \DOMDocument();
+
+        if (trim($body) === '' || !@$doc->loadXML($body, LIBXML_NONET | LIBXML_NOENT)) {
+            return [];
+        }
+
+        $xpath = new \DOMXPath($doc);
+        $xpath->registerNamespace('D', Dav::NS_DAV);
+        $nodes = $xpath->query('//D:set/D:prop/* | //D:remove/D:prop/*');
+
+        if ($nodes === false) {
+            return [];
+        }
+
+        $properties = [];
+        foreach ($nodes as $node) {
+            if (!$node instanceof DOMElement) {
+                continue;
+            }
+            $properties[] = [
+                'namespace' => $node->namespaceURI ?? '',
+                'name' => $node->localName ?? $node->nodeName,
+            ];
+        }
+
+        return $properties;
     }
 
     // -------------------------------------------------------------------------
@@ -351,7 +413,7 @@ final class CalDavRouter
 
     private function methodNotAllowed(): CalDavResponse
     {
-        return new CalDavResponse(405, '', 'text/plain', ['Allow' => 'OPTIONS, PROPFIND']);
+        return new CalDavResponse(405, '', 'text/plain', ['Allow' => 'OPTIONS, PROPFIND, PROPPATCH']);
     }
 
     private function notFound(): CalDavResponse
