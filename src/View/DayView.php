@@ -11,18 +11,26 @@ use Tito10047\Calendar\ICal\ICalEvent;
  * Hourly / time-slot grid for a single day.
  *
  * Usage:
- *   $slots = DayView::forDate(new DateTimeImmutable('2025-06-15'))
+ *   $view = DayView::forDate(new DateTimeImmutable('2025-06-15', new DateTimeZone('Europe/Bratislava')))
  *       ->withSlotDuration(30)   // minutes per slot
  *       ->withRange(8, 20)       // 08:00 – 20:00
- *       ->setEvents($events)
- *       ->getSlots();
+ *       ->setEvents($events);
  *
- *   foreach ($slots as $slot) {
+ *   foreach ($view->getAllDayEvents() as $event) {   // render in an "all-day" header row
+ *       echo $event->summary;
+ *   }
+ *   foreach ($view->getSlots() as $slot) {
  *       echo $slot->startTime->format('H:i');
  *       foreach ($slot->events as $event) {
  *           echo $event->summary;
  *       }
  *   }
+ *
+ * The view works in the timezone of the date passed to forDate(): timed events are converted to
+ * it, multi-day and overnight events occupy every slot they overlap, recurring events are expanded
+ * (RECURRENCE-ID overrides applied) and all-day events are reported separately via
+ * getAllDayEvents(). Slots are measured in elapsed time, so DST-change days have 23 or 25 hourly
+ * slots. Events are per-instance ICalEvent objects carrying the occurrence's own start/end.
  */
 final class DayView
 {
@@ -74,25 +82,36 @@ final class DayView
     }
 
     /**
+     * All-day instances on this day (not included in any time slot).
+     *
+     * @return list<ICalEvent>
+     */
+    public function getAllDayEvents(): array
+    {
+        return array_values(array_filter($this->instancesOnDay(), static fn (ICalEvent $e) => $e->allDay));
+    }
+
+    /**
      * @return list<TimeSlot>
      */
     public function getSlots(): array
     {
-        $dayStart  = $this->date->setTime($this->hourFrom, 0, 0);
-        $dayEnd    = $this->date->setTime($this->hourTo, 0, 0);
-        $stepSecs  = $this->slotDuration * 60;
+        $dayStart = $this->date->setTime($this->hourFrom, 0, 0);
+        $dayEnd   = $this->hourTo === 24
+            ? $this->date->modify('+1 day')
+            : $this->date->setTime($this->hourTo, 0, 0);
+        $stepSecs = $this->slotDuration * 60;
 
-        // Collect all events occurring on this day
-        $dayEvents = $this->eventsOnDay();
+        $timed = array_values(array_filter($this->instancesOnDay(), static fn (ICalEvent $e) => !$e->allDay));
 
         $slots   = [];
         $current = $dayStart;
 
         while ($current < $dayEnd) {
-            $slotEnd    = $current->modify("+{$this->slotDuration} minutes");
-            $slotEvents = [];
+            $slotEnd = $current->setTimestamp(min($current->getTimestamp() + $stepSecs, $dayEnd->getTimestamp()));
 
-            foreach ($dayEvents as $event) {
+            $slotEvents = [];
+            foreach ($timed as $event) {
                 if ($this->overlaps($event, $current, $slotEnd)) {
                     $slotEvents[] = $event;
                 }
@@ -114,44 +133,48 @@ final class DayView
     // Helpers
     // -------------------------------------------------------------------------
 
-    /** @return list<ICalEvent> */
-    private function eventsOnDay(): array
+    /** @return list<ICalEvent> instances overlapping this day, timed ones converted to the view's timezone */
+    private function instancesOnDay(): array
     {
-        $dayStart = $this->date->setTime(0, 0, 0);
-        $dayEnd   = $this->date->setTime(23, 59, 59);
-        $result   = [];
+        $tz     = $this->date->getTimezone();
+        $result = [];
 
         foreach ($this->events as $event) {
-            $occurrences = $event->occurrences($dayStart, $dayEnd);
-            if ($occurrences !== []) {
-                $result[] = $event;
+            foreach ($event->expandOccurrences($this->date, $this->date) as $instance) {
+                if (!$instance->allDay) {
+                    $instance = self::inTimezone($instance, $tz);
+                }
+                $result[] = $instance;
             }
         }
 
+        usort($result, static fn (ICalEvent $a, ICalEvent $b) => $a->dtStart <=> $b->dtStart);
+
         return $result;
+    }
+
+    private static function inTimezone(ICalEvent $event, \DateTimeZone $tz): ICalEvent
+    {
+        if ($event->dtStart->getTimezone()->getName() === $tz->getName()) {
+            return $event;
+        }
+        return $event->withDates($event->dtStart->setTimezone($tz), $event->dtEnd?->setTimezone($tz));
     }
 
     private function overlaps(ICalEvent $event, DateTimeImmutable $slotStart, DateTimeImmutable $slotEnd): bool
     {
         $evStart = $event->dtStart;
-        $evEnd   = $event->dtEnd ?? $evStart->modify('+1 hour');
+        $evEnd   = $event->getEnd($evStart);
 
-        // Normalize to the day of this view (for recurring events the occurrence is on this day)
-        $evStartNorm = $this->date->setTime(
-            (int) $evStart->format('H'),
-            (int) $evStart->format('i'),
-            (int) $evStart->format('s'),
-        );
-        $evEndNorm = $this->date->setTime(
-            (int) $evEnd->format('H'),
-            (int) $evEnd->format('i'),
-            (int) $evEnd->format('s'),
-        );
-        if ($evEndNorm <= $evStartNorm) {
-            $evEndNorm = $evStartNorm->modify('+1 hour');
+        // Events without an end are shown as one hour long; zero-length events occupy their start slot
+        if ($evEnd === null) {
+            $evEnd = $evStart->modify('+1 hour');
+        }
+        if ($evEnd <= $evStart) {
+            return $evStart >= $slotStart && $evStart < $slotEnd;
         }
 
         // Overlap: event starts before slot ends AND event ends after slot starts
-        return $evStartNorm < $slotEnd && $evEndNorm > $slotStart;
+        return $evStart < $slotEnd && $evEnd > $slotStart;
     }
 }

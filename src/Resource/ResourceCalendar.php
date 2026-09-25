@@ -16,13 +16,18 @@ use Tito10047\Calendar\Day;
  * Template iteration pattern:
  *   foreach ($resourceCalendar->getResources() as $resource) {
  *       $table = $resourceCalendar->getDaysTableForResource($resource);
- *       // $table is Day[][] keyed by [weekNum][isoDay] — same shape as Calendar::getDaysTable()
+ *       // $table is Day[][] keyed by [yearWeek][isoDay] — same shape as Calendar::getDaysTable()
  *   }
+ *
+ * Data loading: with a plain ResourceDataLoaderInterface, load() runs once per resource. Implement
+ * BatchResourceDataLoaderInterface to load all resources with a single loadAll() call instead.
  */
 final class ResourceCalendar
 {
-    /** @var array<string, Day[][]>  Keyed by resourceId, lazy-loaded on first access */
+    /** @var array<string, array<int, array<int, Day>>>  Keyed by resourceId, lazy-loaded on first access */
     private array $cache = [];
+
+    private bool $batchLoaded = false;
 
     /**
      * @param ResourceInterface[] $resources
@@ -46,15 +51,25 @@ final class ResourceCalendar
     }
 
     /**
-     * @return Day[][] keyed as [weekNum][isoDay]
+     * @return array<int, array<int, Day>> keyed as [yearWeek][isoDay]
      */
     public function getDaysTableForResource(ResourceInterface $resource): array
     {
         $id = $resource->getResourceId();
 
         if (!isset($this->cache[$id])) {
+            $preloaded = false;
+            if ($this->loader instanceof BatchResourceDataLoaderInterface) {
+                if (!$this->batchLoaded) {
+                    $range = $this->calendar->getDateRange();
+                    $this->loader->loadAll(array_values($this->resources), $range['from'], $range['to']);
+                    $this->batchLoaded = true;
+                }
+                $preloaded = true;
+            }
+
             $this->cache[$id] = $this->calendar
-                ->setDataLoader(new ResourceLoaderAdapter($this->loader, $resource))
+                ->setDataLoader(new ResourceLoaderAdapter($this->loader, $resource, $preloaded))
                 ->getDaysTable();
         }
 
@@ -64,7 +79,7 @@ final class ResourceCalendar
     /**
      * Return the full resource table in one call.
      *
-     * @return array<string, Day[][]> keyed by resourceId
+     * @return array<string, array<int, array<int, Day>>> keyed by resourceId
      */
     public function getResourceTable(): array
     {

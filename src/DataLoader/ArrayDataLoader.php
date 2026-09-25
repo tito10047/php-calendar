@@ -11,7 +11,7 @@ use Tito10047\Calendar\Interface\DayDataLoaderInterface;
  * In-memory DayDataLoaderInterface backed by a plain array.
  *
  * Intended as the bridge between a cache layer and Calendar::fromConfig():
- *   $data = $cache->get($config->cacheKey(), fn() => $loader->computeData($from, $to));
+ *   $data = $cache->get($config->cacheKey(), fn() => $myRepository->eventsByDay($from, $to)); // array<Y-m-d, array>
  *   $calendar = Calendar::fromConfig($config, $data);
  */
 final class ArrayDataLoader implements DayDataLoaderInterface

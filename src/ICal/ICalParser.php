@@ -12,12 +12,16 @@ use Tito10047\Calendar\Enum\EventTransp;
 use Tito10047\Calendar\Recurrence\RecurrenceRule;
 
 /**
- * Minimal RFC 5545 iCal parser.
+ * RFC 5545 iCal parser.
  *
- * Handles: VEVENT, RRULE, EXDATE, DTSTART, DTEND, DURATION, SUMMARY,
- * DESCRIPTION, LOCATION, URL, UID.
- * Timezone handling: TZID property on DTSTART/DTEND, VTIMEZONE blocks (UTC offset),
- * and UTC Z-suffix dates.
+ * Handles: VEVENT (incl. RECURRENCE-ID overrides and RANGE=THISANDFUTURE), VTODO, VALARM,
+ * VTIMEZONE, RRULE, RDATE, EXDATE (incl. comma-separated lists), DTSTART/DTEND/DURATION,
+ * DATE vs. DATE-TIME values, TEXT escaping, quoted parameter values and RFC 6868 parameter
+ * encoding.
+ *
+ * Timezones: TZID parameters resolve against the file's VTIMEZONE blocks and IANA names;
+ * UTC values keep the Z suffix; floating times and DATE values are created in the default
+ * timezone (constructor argument, falls back to date_default_timezone_get()).
  *
  * Usage:
  *   $parser = new ICalParser();
@@ -27,32 +31,53 @@ use Tito10047\Calendar\Recurrence\RecurrenceRule;
  */
 final class ICalParser
 {
+    /** Default size limit for parseUrl() / parseFile() — 10 MiB. */
+    public const DEFAULT_MAX_BYTES = 10 * 1024 * 1024;
+
+    private const TEXT_PROPERTIES = ['SUMMARY', 'DESCRIPTION', 'LOCATION', 'COMMENT', 'UID', 'COLOR', 'CONTACT', 'RESOURCES'];
+
+    private readonly DateTimeZone $defaultTimezone;
+
     /**
+     * @param positive-int      $maxBytes        size limit for parseUrl() / parseFile()
+     * @param int               $timeout         HTTP timeout in seconds for parseUrl()
+     * @param DateTimeZone|null $defaultTimezone zone for floating times and DATE values
+     */
+    public function __construct(
+        private readonly int $maxBytes = self::DEFAULT_MAX_BYTES,
+        private readonly int $timeout = 10,
+        ?DateTimeZone $defaultTimezone = null,
+    ) {
+        if ($maxBytes < 1) {
+            throw new \InvalidArgumentException('maxBytes must be positive');
+        }
+        $this->defaultTimezone = $defaultTimezone ?? new DateTimeZone(date_default_timezone_get());
+    }
+
+    /**
+     * Parse a local .ics file. Only pass trusted paths — for remote feeds use parseUrl().
+     *
      * @return list<ICalEvent>
      */
     public function parseFile(string $path): array
     {
-        $content = file_get_contents($path);
+        $content = @file_get_contents($path, false, null, 0, $this->maxBytes + 1);
         if ($content === false) {
             throw new \RuntimeException("Cannot read iCal file: {$path}");
         }
+        $this->assertSize($content);
         return $this->parseString($content);
     }
 
     /**
+     * Fetch and parse a remote feed. Only http:// and https:// URLs are accepted (webcal:// is
+     * rewritten to https://); the response is limited to maxBytes and must have a 2xx status.
+     *
      * @return list<ICalEvent>
      */
     public function parseUrl(string $url): array
     {
-        $context = stream_context_create([
-            'http' => ['timeout' => 10, 'user_agent' => 'php-calendar/2.0 iCalParser'],
-            'ssl'  => ['verify_peer' => true],
-        ]);
-        $content = @file_get_contents($url, false, $context);
-        if ($content === false) {
-            throw new \RuntimeException("Cannot fetch iCal URL: {$url}");
-        }
-        return $this->parseString($content);
+        return $this->parseString($this->fetch($url));
     }
 
     /**
@@ -60,32 +85,12 @@ final class ICalParser
      */
     public function parseTodos(string $icsContent): array
     {
-        $lines = $this->unfold($icsContent);
-        $tzMap = $this->parseTzMap($lines);
+        $root  = $this->parseComponents($icsContent);
+        $tzMap = $this->parseTzMap($root);
         $todos = [];
 
-        $inTodo     = false;
-        $properties = [];
-
-        foreach ($lines as $line) {
-            $line = rtrim($line, "\r\n");
-
-            if ($line === 'BEGIN:VTODO') {
-                $inTodo     = true;
-                $properties = [];
-                continue;
-            }
-
-            if ($line === 'END:VTODO') {
-                $inTodo = false;
-                $todos[] = $this->buildTodo($properties, $tzMap);
-                continue;
-            }
-
-            if ($inTodo) {
-                [$name, $params, $value] = $this->parseLine($line);
-                $properties[$name][] = ['params' => $params, 'value' => $value];
-            }
+        foreach ($root->find('VTODO') as $todo) {
+            $todos[] = $this->buildTodo($todo->props, $tzMap);
         }
 
         return $todos;
@@ -96,75 +101,49 @@ final class ICalParser
      */
     public function parseString(string $icsContent): array
     {
-        $lines  = $this->unfold($icsContent);
-        $tzMap  = $this->parseTzMap($lines);
+        $root  = $this->parseComponents($icsContent);
+        $tzMap = $this->parseTzMap($root);
 
         /** @var list<ICalEvent> $masters */
-        $masters   = [];
+        $masters = [];
         /** @var list<ICalEvent> $overrides */
         $overrides = [];
 
-        $inEvent    = false;
-        $inAlarm    = false;
-        $properties = [];
-        $alarmProps = [];
-        /** @var list<VAlarm> $alarms */
-        $alarms     = [];
-
-        foreach ($lines as $line) {
-            $line = rtrim($line, "\r\n");
-
-            if ($line === 'BEGIN:VEVENT') {
-                $inEvent    = true;
-                $properties = [];
-                $alarms     = [];
-                continue;
-            }
-
-            if ($line === 'END:VEVENT') {
-                $inEvent = false;
-                $event   = $this->buildEvent($properties, $tzMap, $alarms);
-                if ($event !== null) {
-                    if ($event->recurrenceId !== null) {
-                        $overrides[] = $event;
-                    } else {
-                        $masters[] = $event;
+        foreach ($root->find('VEVENT') as $component) {
+            $alarms = [];
+            foreach ($component->children as $child) {
+                if ($child->name === 'VALARM') {
+                    $alarm = $this->buildAlarm($child->props);
+                    if ($alarm !== null) {
+                        $alarms[] = $alarm;
                     }
                 }
-                continue;
             }
 
-            if ($inEvent && $line === 'BEGIN:VALARM') {
-                $inAlarm    = true;
-                $alarmProps = [];
+            $event = $this->buildEvent($component->props, $tzMap, $alarms);
+            if ($event === null) {
                 continue;
             }
-
-            if ($inEvent && $line === 'END:VALARM') {
-                $inAlarm = false;
-                $alarm   = $this->buildAlarm($alarmProps);
-                if ($alarm !== null) {
-                    $alarms[] = $alarm;
-                }
-                continue;
-            }
-
-            if ($inAlarm) {
-                [$name, $params, $value] = $this->parseLine($line);
-                $alarmProps[$name][] = ['params' => $params, 'value' => $value];
-            } elseif ($inEvent) {
-                [$name, $params, $value] = $this->parseLine($line);
-                $properties[$name][] = ['params' => $params, 'value' => $value];
+            if ($event->recurrenceId !== null) {
+                $overrides[] = $event;
+            } else {
+                $masters[] = $event;
             }
         }
 
-        // Attach RECURRENCE-ID overrides to their master events
+        // Attach RECURRENCE-ID overrides to their master events; orphans (e.g. a single-instance
+        // invitation) are standalone instances and are returned as regular events.
         foreach ($overrides as $override) {
+            $attached = false;
             foreach ($masters as $i => $master) {
-                if ($master->uid === $override->uid && $override->recurrenceId !== null) {
+                if ($master->uid === $override->uid && $master->isRecurring() && $override->recurrenceId !== null) {
                     $masters[$i] = $master->withModifiedOccurrence($override->recurrenceId, $override);
+                    $attached    = true;
                     break;
                 }
+            }
+            if (!$attached) {
+                $masters[] = $override;
             }
         }
 
@@ -172,242 +151,499 @@ final class ICalParser
     }
 
     // -------------------------------------------------------------------------
-    // Internal parsing
+    // Transport
+    // -------------------------------------------------------------------------
+
+    private function fetch(string $url): string
+    {
+        if (preg_match('#^webcals?://#i', $url)) {
+            $url = 'https://' . substr($url, strpos($url, '://') + 3);
+        }
+        $scheme = strtolower((string) parse_url($url, PHP_URL_SCHEME));
+        if (!in_array($scheme, ['http', 'https'], true) || parse_url($url, PHP_URL_HOST) === null) {
+            throw new \InvalidArgumentException('Only http:// and https:// iCal URLs are supported, got: ' . self::redactUrl($url));
+        }
+
+        $context = stream_context_create([
+            'http' => [
+                'timeout'         => $this->timeout,
+                'user_agent'      => 'php-calendar iCalParser',
+                'follow_location' => 1,
+                'max_redirects'   => 5,
+                'ignore_errors'   => true,
+            ],
+            'ssl' => ['verify_peer' => true, 'verify_peer_name' => true],
+        ]);
+
+        $content = @file_get_contents($url, false, $context, 0, $this->maxBytes + 1);
+        if ($content === false) {
+            throw new \RuntimeException('Cannot fetch iCal URL: ' . self::redactUrl($url));
+        }
+
+        // $http_response_header is deprecated as of PHP 8.5; http_get_last_response_headers() exists since 8.4
+        $headers = function_exists('http_get_last_response_headers') ? http_get_last_response_headers() : $http_response_header;
+        $status  = self::lastStatusCode(is_array($headers) ? $headers : []);
+        if ($status !== null && ($status < 200 || $status >= 300)) {
+            throw new \RuntimeException("Cannot fetch iCal URL (HTTP {$status}): " . self::redactUrl($url));
+        }
+
+        $this->assertSize($content);
+
+        return $content;
+    }
+
+    private function assertSize(string $content): void
+    {
+        if (strlen($content) > $this->maxBytes) {
+            throw new \RuntimeException("iCal content exceeds the {$this->maxBytes} byte limit");
+        }
+    }
+
+    /** @param array<mixed> $headers */
+    private static function lastStatusCode(array $headers): ?int
+    {
+        $status = null;
+        foreach ($headers as $header) {
+            if (is_string($header) && preg_match('#^HTTP/\S+\s+(\d{3})#', $header, $m)) {
+                $status = (int) $m[1];
+            }
+        }
+        return $status;
+    }
+
+    /** Remove user:password@ from a URL so credentials never end up in exception messages. */
+    private static function redactUrl(string $url): string
+    {
+        return (string) preg_replace('#^([a-z][a-z0-9+.-]*://)[^/@]*@#i', '$1***@', $url);
+    }
+
+    // -------------------------------------------------------------------------
+    // Lexing
     // -------------------------------------------------------------------------
 
     /**
-     * Unfold RFC 5545 line continuations (CRLF followed by whitespace).
+     * Unfold RFC 5545 line continuations and split into content lines.
      *
      * @return list<string>
      */
     private function unfold(string $content): array
     {
-        if (!str_contains($content, "\r\n") && str_contains($content, "\n")) {
-            $content = str_replace("\n", "\r\n", $content);
+        if (str_starts_with($content, "\xEF\xBB\xBF")) {
+            $content = substr($content, 3);
         }
-        $content = str_replace(["\r\n ", "\r\n\t"], '', $content);
-        return explode("\r\n", $content);
+        $content = str_replace(["\r\n", "\r"], "\n", $content);
+        $content = str_replace(["\n ", "\n\t"], '', $content);
+
+        return array_values(array_filter(explode("\n", $content), static fn (string $l) => trim($l) !== ''));
     }
 
-    /**
-     * Parse VTIMEZONE blocks and build a tzid → DateTimeZone map.
-     *
-     * @param  array<string>           $lines
-     * @return array<string, DateTimeZone>
-     */
-    private function parseTzMap(array $lines): array
+    /** Build the component tree; unterminated components are discarded. */
+    private function parseComponents(string $content): ICalComponent
     {
-        $map       = [];
-        $inTz      = false;
-        $tzId      = null;
-        $offsetStr = null;
+        $root = new ICalComponent('ROOT');
+        /** @var non-empty-list<ICalComponent> $stack */
+        $stack = [$root];
 
-        foreach ($lines as $line) {
-            $line = rtrim($line, "\r\n");
-            if ($line === 'BEGIN:VTIMEZONE') {
-                $inTz      = true;
-                $tzId      = null;
-                $offsetStr = null;
+        foreach ($this->unfold($content) as $line) {
+            [$name, $params, $value] = $this->parseLine($line);
+
+            if ($name === 'BEGIN') {
+                $stack[] = new ICalComponent(strtoupper(trim($value)));
                 continue;
             }
-            if ($line === 'END:VTIMEZONE') {
-                $inTz = false;
-                if ($tzId !== null) {
-                    try {
-                        $map[$tzId] = new DateTimeZone($tzId);
-                    } catch (\Exception) {
-                        // Fall back to UTC offset if TZID is not a named timezone
-                        if ($offsetStr !== null) {
-                            try {
-                                $map[$tzId] = new DateTimeZone($offsetStr);
-                            } catch (\Exception) {
-                                $map[$tzId] = new DateTimeZone('UTC');
-                            }
-                        } else {
-                            $map[$tzId] = new DateTimeZone('UTC');
+
+            if ($name === 'END') {
+                $endName = strtoupper(trim($value));
+                // Close up to the matching component; tolerate missing END lines of nested ones
+                for ($i = count($stack) - 1; $i > 0; $i--) {
+                    if ($stack[$i]->name === $endName) {
+                        while (count($stack) > $i) {
+                            $done                               = array_pop($stack);
+                            $stack[count($stack) - 1]->children[] = $done;
                         }
+                        break;
                     }
                 }
                 continue;
             }
-            if ($inTz) {
-                [$name, , $value] = $this->parseLine($line);
-                if ($name === 'TZID') {
-                    $tzId = $value;
+
+            if ($name !== '') {
+                $stack[count($stack) - 1]->addProperty($name, $params, $value);
+            }
+        }
+
+        return $root;
+    }
+
+    /**
+     * Split a content line into name, parameters and value (RFC 5545 §3.1).
+     * Parameter values may be DQUOTE-quoted and contain ';', ':' and ','. Repeated parameters
+     * are merged into a comma-separated list. RFC 6868 ^-escapes are decoded.
+     *
+     * @return array{string, array<string, string>, string}
+     */
+    private function parseLine(string $line): array
+    {
+        $len = strlen($line);
+        $pos = strcspn($line, ';:');
+        $name = strtoupper(trim(substr($line, 0, $pos)));
+        $params = [];
+
+        while ($pos < $len && $line[$pos] === ';') {
+            $pos++;
+            $eq        = strcspn($line, '=;:', $pos);
+            $paramName = strtoupper(trim(substr($line, $pos, $eq)));
+            $pos      += $eq;
+
+            $values = [];
+            if ($pos < $len && $line[$pos] === '=') {
+                do {
+                    $pos++;
+                    if ($pos < $len && $line[$pos] === '"') {
+                        $close    = strpos($line, '"', $pos + 1);
+                        $close    = $close === false ? $len : $close;
+                        $values[] = substr($line, $pos + 1, $close - $pos - 1);
+                        $pos      = min($len, $close + 1);
+                    } else {
+                        $n        = strcspn($line, ',;:', $pos);
+                        $values[] = substr($line, $pos, $n);
+                        $pos     += $n;
+                    }
+                } while ($pos < $len && $line[$pos] === ',');
+            }
+
+            if ($paramName !== '') {
+                $decoded           = array_map(self::decodeParamValue(...), $values);
+                $params[$paramName] = isset($params[$paramName])
+                    ? $params[$paramName] . ',' . implode(',', $decoded)
+                    : implode(',', $decoded);
+            }
+        }
+
+        $value = $pos < $len && $line[$pos] === ':' ? substr($line, $pos + 1) : '';
+
+        return [$name, $params, $value];
+    }
+
+    /** RFC 6868: ^n = newline, ^' = DQUOTE, ^^ = ^ */
+    private static function decodeParamValue(string $value): string
+    {
+        return (string) preg_replace_callback(
+            "/\\^([n'^])/",
+            static fn (array $m) => match ($m[1]) {
+                'n'     => "\n",
+                "'"     => '"',
+                default => '^',
+            },
+            $value,
+        );
+    }
+
+    /** Undo RFC 5545 §3.3.11 TEXT escaping. */
+    private static function unescapeText(string $value): string
+    {
+        return (string) preg_replace_callback(
+            '/\\\\([\\\\;,nN])/',
+            static fn (array $m) => ($m[1] === 'n' || $m[1] === 'N') ? "\n" : $m[1],
+            $value,
+        );
+    }
+
+    /**
+     * Split a TEXT list on unescaped commas and unescape each item.
+     *
+     * @return list<string>
+     */
+    private static function splitTextList(string $value): array
+    {
+        $items   = [];
+        $current = '';
+        $len     = strlen($value);
+        for ($i = 0; $i < $len; $i++) {
+            $char = $value[$i];
+            if ($char === '\\' && $i + 1 < $len) {
+                $current .= $char . $value[++$i];
+                continue;
+            }
+            if ($char === ',') {
+                $items[] = $current;
+                $current = '';
+                continue;
+            }
+            $current .= $char;
+        }
+        $items[] = $current;
+
+        return array_values(array_filter(
+            array_map(static fn (string $item) => trim(self::unescapeText($item)), $items),
+            static fn (string $item) => $item !== '',
+        ));
+    }
+
+    // -------------------------------------------------------------------------
+    // Timezones
+    // -------------------------------------------------------------------------
+
+    /**
+     * Build a TZID → DateTimeZone map from the VTIMEZONE components.
+     *
+     * @return array<string, DateTimeZone>
+     */
+    private function parseTzMap(ICalComponent $root): array
+    {
+        $map = [];
+
+        foreach ($root->find('VTIMEZONE') as $vtz) {
+            $tzId = $this->firstValue($vtz->props, 'TZID');
+            if ($tzId === null) {
+                continue;
+            }
+
+            $named = $this->tryNamedTz($tzId) ?? $this->tryNamedTz($this->firstValue($vtz->props, 'X-LIC-LOCATION') ?? '');
+            if ($named !== null) {
+                $map[$tzId] = $named;
+                continue;
+            }
+
+            // Not a known zone name — fall back to a fixed offset (prefer STANDARD time)
+            $offsets = ['STANDARD' => null, 'DAYLIGHT' => null];
+            foreach ($vtz->children as $sub) {
+                if (array_key_exists($sub->name, $offsets)) {
+                    $offsets[$sub->name] = $this->firstValue($sub->props, 'TZOFFSETTO');
                 }
-                if ($name === 'TZOFFSETTO') {
-                    $offsetStr = $this->normaliseOffset($value);
-                }
+            }
+            $offset = $offsets['STANDARD'] ?? $offsets['DAYLIGHT'];
+            try {
+                $map[$tzId] = $offset !== null ? new DateTimeZone($this->normaliseOffset($offset)) : new DateTimeZone('UTC');
+            } catch (\Exception) {
+                $map[$tzId] = new DateTimeZone('UTC');
             }
         }
 
         return $map;
     }
 
-    /**
-     * @return array{string, array<string,string>, string}
-     */
-    private function parseLine(string $line): array
+    private function normaliseOffset(string $offset): string
     {
-        $colonPos = strpos($line, ':');
-        if ($colonPos === false) {
-            return [$line, [], ''];
+        // +0100 → +01:00, +010000 → +01:00
+        if (preg_match('/^([+-])(\d{2})(\d{2})(\d{2})?$/', trim($offset), $m)) {
+            return "{$m[1]}{$m[2]}:{$m[3]}";
         }
+        return trim($offset);
+    }
 
-        $namePart = substr($line, 0, $colonPos);
-        $value    = substr($line, $colonPos + 1);
-
-        // Split name and parameters (e.g. DTSTART;TZID=America/New_York)
-        $parts  = explode(';', $namePart);
-        $name   = strtoupper(array_shift($parts));
-        $params = [];
-        foreach ($parts as $param) {
-            $eqPos = strpos($param, '=');
-            if ($eqPos !== false) {
-                $params[strtoupper(substr($param, 0, $eqPos))] = substr($param, $eqPos + 1);
+    private function tryNamedTz(string $tzId): ?DateTimeZone
+    {
+        $tzId = trim($tzId);
+        if ($tzId === '') {
+            return null;
+        }
+        // Global TZIDs may be prefixed with "/" (RFC 5545 §3.2.19)
+        foreach ([$tzId, ltrim($tzId, '/')] as $candidate) {
+            try {
+                return new DateTimeZone($candidate);
+            } catch (\Exception) {
+                // try next
             }
         }
+        return null;
+    }
 
-        return [$name, $params, $value];
+    // -------------------------------------------------------------------------
+    // Values
+    // -------------------------------------------------------------------------
+
+    /**
+     * Parse a DATE or DATE-TIME value.
+     *
+     * @param  array<string, string>        $params
+     * @param  array<string, DateTimeZone>  $tzMap
+     * @return array{DateTimeImmutable, bool}|null [value, isDate]
+     */
+    private function parseDateValue(string $value, array $params, array $tzMap): ?array
+    {
+        $value = strtoupper(trim($value));
+
+        // DATE: 20241101 — a calendar date, created at midnight in the default timezone
+        if (preg_match('/^\d{8}$/', $value)) {
+            $dt = DateTimeImmutable::createFromFormat('!Ymd', $value, $this->defaultTimezone);
+            return $dt !== false ? [$dt, true] : null;
+        }
+
+        // DATE-TIME in UTC: 20241101T120000Z
+        if (preg_match('/^\d{8}T\d{6}Z$/', $value)) {
+            $dt = DateTimeImmutable::createFromFormat('!Ymd\THis\Z', $value, new DateTimeZone('UTC'));
+            return $dt !== false ? [$dt, false] : null;
+        }
+
+        // DATE-TIME with TZID, or floating
+        if (preg_match('/^\d{8}T\d{6}$/', $value)) {
+            $tzId = $params['TZID'] ?? null;
+            $tz   = $tzId !== null
+                ? ($tzMap[$tzId] ?? $this->tryNamedTz($tzId) ?? $this->defaultTimezone)
+                : $this->defaultTimezone;
+            $dt = DateTimeImmutable::createFromFormat('!Ymd\THis', $value, $tz);
+            return $dt !== false ? [$dt, false] : null;
+        }
+
+        return null;
     }
 
     /**
-     * @param array<string, list<array{params: array<string,string>, value: string}>> $props
+     * @param array<string, string>       $params
+     * @param array<string, DateTimeZone> $tzMap
+     */
+    private function parseDateTime(string $value, array $params, array $tzMap): ?DateTimeImmutable
+    {
+        return $this->parseDateValue($value, $params, $tzMap)[0] ?? null;
+    }
+
+    /**
+     * Parse every date of a (possibly comma-separated, possibly multi-line) EXDATE/RDATE property.
+     * PERIOD values contribute their start.
+     *
+     * @param  list<array{params: array<string, string>, value: string}> $entries
+     * @param  array<string, DateTimeZone>                               $tzMap
+     * @return list<DateTimeImmutable>
+     */
+    private function parseDateList(array $entries, array $tzMap): array
+    {
+        $dates = [];
+        foreach ($entries as $entry) {
+            foreach (explode(',', $entry['value']) as $raw) {
+                $raw = trim(explode('/', $raw, 2)[0]);
+                if ($raw === '') {
+                    continue;
+                }
+                $dt = $this->parseDateTime($raw, $entry['params'], $tzMap);
+                if ($dt !== null) {
+                    $dates[] = $dt;
+                }
+            }
+        }
+        return $dates;
+    }
+
+    /** RFC 5545 DURATION (e.g. PT1H30M, P1D, P2W, -PT15M) → DateInterval. */
+    private function parseDuration(string $value): ?\DateInterval
+    {
+        $value    = strtoupper(trim($value));
+        $negative = str_starts_with($value, '-');
+        $value    = ltrim($value, '+-');
+        try {
+            $interval         = new \DateInterval($value);
+            $interval->invert = $negative ? 1 : 0;
+            return $interval;
+        } catch (\Exception) {
+            return null;
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Component builders
+    // -------------------------------------------------------------------------
+
+    /**
+     * @param array<string, list<array{params: array<string, string>, value: string}>> $props
      * @param array<string, DateTimeZone>                                             $tzMap
      * @param list<VAlarm>                                                            $alarms
      */
     private function buildEvent(array $props, array $tzMap, array $alarms = []): ?ICalEvent
     {
-        $uid = $this->firstValue($props, 'UID') ?? uniqid('event_', true);
+        $uid = $this->textValue($props, 'UID') ?? uniqid('event_', true);
 
         $dtStartEntry = $props['DTSTART'][0] ?? null;
         if ($dtStartEntry === null) {
             return null;
         }
-        $dtStart = $this->parseDateTime($dtStartEntry['value'], $dtStartEntry['params'], $tzMap);
-        if ($dtStart === null) {
+        $parsedStart = $this->parseDateValue($dtStartEntry['value'], $dtStartEntry['params'], $tzMap);
+        if ($parsedStart === null) {
             return null;
         }
+        [$dtStart, $allDay] = $parsedStart;
 
         $dtEnd = null;
         if (isset($props['DTEND'])) {
-            $e = $props['DTEND'][0];
+            $e     = $props['DTEND'][0];
             $dtEnd = $this->parseDateTime($e['value'], $e['params'], $tzMap);
         } elseif (isset($props['DURATION'])) {
             $duration = $this->parseDuration($props['DURATION'][0]['value']);
             $dtEnd    = $duration !== null ? $dtStart->add($duration) : null;
         }
 
-        $rrule   = null;
-        $exDates = [];
+        $exDates = isset($props['EXDATE']) ? $this->parseDateList($props['EXDATE'], $tzMap) : [];
+        $rDates  = isset($props['RDATE']) ? $this->parseDateList($props['RDATE'], $tzMap) : [];
 
+        $rrule = null;
         if (isset($props['RRULE'])) {
             try {
-                $rule = RecurrenceRule::fromRrule($props['RRULE'][0]['value']);
-                // Incorporate EXDATE entries directly into the rule
-                if (isset($props['EXDATE'])) {
-                    foreach ($props['EXDATE'] as $exEntry) {
-                        $exDate = $this->parseDateTime($exEntry['value'], $exEntry['params'], $tzMap);
-                        if ($exDate !== null) {
-                            $exDates[] = $exDate;
-                        }
-                    }
-                }
-                // Incorporate RDATE explicit occurrence dates
-                if (isset($props['RDATE'])) {
-                    $rDates = [];
-                    foreach ($props['RDATE'] as $rdEntry) {
-                        foreach (explode(',', $rdEntry['value']) as $rawDate) {
-                            $rawDate = trim($rawDate);
-                            if ($rawDate === '') {
-                                continue;
-                            }
-                            $rDate = $this->parseDateTime($rawDate, $rdEntry['params'], $tzMap);
-                            if ($rDate !== null) {
-                                $rDates[] = $rDate;
-                            }
-                        }
-                    }
-                    if ($rDates !== []) {
-                        $rule = $rule->withExtraDates(...$rDates);
-                    }
-                }
-                $rrule = $rule;
+                $rrule = RecurrenceRule::fromRrule($props['RRULE'][0]['value']);
             } catch (\InvalidArgumentException) {
-                // Malformed RRULE — treat as non-recurring
+                // Malformed RRULE — treat as non-recurring rather than losing the whole feed
             }
+        }
+        if ($rrule === null && $rDates !== []) {
+            // RDATE without RRULE: the recurrence set is DTSTART plus the explicit dates
+            $rrule = RecurrenceRule::daily()->limitTo(1);
+        }
+        if ($rrule !== null && $rDates !== []) {
+            $rrule = $rrule->withExtraDates(...$rDates);
         }
 
         $categories = [];
-        if (isset($props['CATEGORIES'])) {
-            foreach ($props['CATEGORIES'] as $catEntry) {
-                foreach (explode(',', $catEntry['value']) as $cat) {
-                    $cat = trim($cat);
-                    if ($cat !== '') {
-                        $categories[] = $cat;
-                    }
-                }
-            }
+        foreach ($props['CATEGORIES'] ?? [] as $catEntry) {
+            array_push($categories, ...self::splitTextList($catEntry['value']));
         }
 
         $statusRaw = $this->firstValue($props, 'STATUS');
-        $status    = $statusRaw !== null ? EventStatus::tryFrom(strtoupper($statusRaw)) : null;
+        $status    = $statusRaw !== null ? EventStatus::tryFrom(strtoupper(trim($statusRaw))) : null;
 
         $organizerEmail = null;
         $organizerName  = null;
         if (isset($props['ORGANIZER'])) {
-            $org   = $props['ORGANIZER'][0];
-            $val   = $org['value'];
-            $organizerEmail = str_starts_with(strtolower($val), 'mailto:') ? substr($val, 7) : $val;
+            $org            = $props['ORGANIZER'][0];
+            $organizerEmail = self::stripMailto($org['value']);
             $organizerName  = $org['params']['CN'] ?? null;
         }
 
         $attendees = [];
-        if (isset($props['ATTENDEE'])) {
-            foreach ($props['ATTENDEE'] as $att) {
-                $val      = $att['value'];
-                $email    = str_starts_with(strtolower($val), 'mailto:') ? substr($val, 7) : $val;
-                $name     = $att['params']['CN'] ?? null;
-                $role     = $att['params']['ROLE'] ?? 'REQ-PARTICIPANT';
-                $partStat = $att['params']['PARTSTAT'] ?? 'NEEDS-ACTION';
-                $rsvp     = strtoupper($att['params']['RSVP'] ?? '') === 'TRUE';
-                $attendees[] = new Attendee($email, $name, $role, $partStat, $rsvp);
-            }
+        foreach ($props['ATTENDEE'] ?? [] as $att) {
+            $attendees[] = new Attendee(
+                email:    self::stripMailto($att['value']),
+                name:     $att['params']['CN'] ?? null,
+                role:     strtoupper($att['params']['ROLE'] ?? 'REQ-PARTICIPANT'),
+                partStat: strtoupper($att['params']['PARTSTAT'] ?? 'NEEDS-ACTION'),
+                rsvp:     strtoupper($att['params']['RSVP'] ?? '') === 'TRUE',
+            );
         }
 
-        // X-* extension properties
+        // X-* extension properties (TEXT by default)
         $extensionProperties = [];
         foreach ($props as $propName => $entries) {
             if (str_starts_with($propName, 'X-')) {
-                $extensionProperties[$propName] = $entries[0]['value'];
+                $extensionProperties[$propName] = self::unescapeText($entries[0]['value']);
             }
         }
 
-        // TRANSP
         $transpRaw = $this->firstValue($props, 'TRANSP');
-        $transp    = $transpRaw !== null ? EventTransp::tryFrom(strtoupper($transpRaw)) : null;
+        $transp    = $transpRaw !== null ? EventTransp::tryFrom(strtoupper(trim($transpRaw))) : null;
 
-        // CLASS
         $classRaw       = $this->firstValue($props, 'CLASS');
-        $classification = $classRaw !== null ? EventClass::tryFrom(strtoupper($classRaw)) : null;
+        $classification = $classRaw !== null ? EventClass::tryFrom(strtoupper(trim($classRaw))) : null;
 
-        // CalDAV metadata
-        $dtStampEntry    = $props['DTSTAMP'][0] ?? null;
-        $createdEntry    = $props['CREATED'][0] ?? null;
-        $lastModEntry    = $props['LAST-MODIFIED'][0] ?? null;
         $recurrenceEntry = $props['RECURRENCE-ID'][0] ?? null;
 
         return new ICalEvent(
             uid:                 $uid,
             dtStart:             $dtStart,
             dtEnd:               $dtEnd,
-            summary:             $this->firstValue($props, 'SUMMARY'),
-            description:         $this->firstValue($props, 'DESCRIPTION'),
-            location:            $this->firstValue($props, 'LOCATION'),
+            summary:             $this->textValue($props, 'SUMMARY'),
+            description:         $this->textValue($props, 'DESCRIPTION'),
+            location:            $this->textValue($props, 'LOCATION'),
             rrule:               $rrule,
             exDates:             $exDates,
             url:                 $this->firstValue($props, 'URL'),
-            color:               $this->firstValue($props, 'COLOR'),
+            color:               $this->textValue($props, 'COLOR'),
             categories:          $categories,
             status:              $status,
             alarms:              $alarms,
@@ -418,105 +654,38 @@ final class ICalParser
             transp:              $transp,
             classification:      $classification,
             priority:            (int) ($this->firstValue($props, 'PRIORITY') ?? 0),
-            dtStamp:             $dtStampEntry !== null ? $this->parseDateTime($dtStampEntry['value'], $dtStampEntry['params'], $tzMap) : null,
-            created:             $createdEntry !== null ? $this->parseDateTime($createdEntry['value'], $createdEntry['params'], $tzMap) : null,
-            lastModified:        $lastModEntry !== null ? $this->parseDateTime($lastModEntry['value'], $lastModEntry['params'], $tzMap) : null,
+            dtStamp:             $this->dateProp($props, 'DTSTAMP', $tzMap),
+            created:             $this->dateProp($props, 'CREATED', $tzMap),
+            lastModified:        $this->dateProp($props, 'LAST-MODIFIED', $tzMap),
             sequence:            (int) ($this->firstValue($props, 'SEQUENCE') ?? 0),
-            recurrenceId:        $recurrenceEntry !== null ? $this->parseDateTime($recurrenceEntry['value'], $recurrenceEntry['params'], $tzMap) : null,
+            recurrenceId:        $this->dateProp($props, 'RECURRENCE-ID', $tzMap),
+            allDay:              $allDay,
+            thisAndFuture:       strtoupper($recurrenceEntry['params']['RANGE'] ?? '') === 'THISANDFUTURE',
         );
     }
 
     /**
-     * Parse an iCal date/datetime string (value + params) into DateTimeImmutable.
-     *
-     * @param array<string, string> $params
-     * @param array<string, DateTimeZone> $tzMap
-     */
-    private function parseDateTime(string $value, array $params, array $tzMap): ?DateTimeImmutable
-    {
-        $value = trim($value);
-
-        // Date-only: 20241101
-        if (preg_match('/^\d{8}$/', $value)) {
-            return DateTimeImmutable::createFromFormat('Ymd', $value, new DateTimeZone('UTC')) ?: null;
-        }
-
-        // DateTime with Z suffix (UTC): 20241101T120000Z
-        if (str_ends_with($value, 'Z')) {
-            $dt = DateTimeImmutable::createFromFormat('Ymd\THis\Z', $value, new DateTimeZone('UTC'));
-            return $dt ?: null;
-        }
-
-        // DateTime with TZID param: 20241101T120000
-        $tzId = $params['TZID'] ?? null;
-        $tz   = $tzId !== null
-            ? ($tzMap[$tzId] ?? $this->tryNamedTz($tzId))
-            : new DateTimeZone('UTC');
-
-        $dt = DateTimeImmutable::createFromFormat('Ymd\THis', $value, $tz);
-        return $dt ?: null;
-    }
-
-    private function parseDuration(string $value): ?\DateInterval
-    {
-        try {
-            return new \DateInterval($value);
-        } catch (\Exception) {
-            return null;
-        }
-    }
-
-    private function normaliseOffset(string $offset): string
-    {
-        // +0100 → +01:00
-        if (preg_match('/^([+-])(\d{2})(\d{2})$/', $offset, $m)) {
-            return "{$m[1]}{$m[2]}:{$m[3]}";
-        }
-        return $offset;
-    }
-
-    private function tryNamedTz(string $tzId): DateTimeZone
-    {
-        try {
-            return new DateTimeZone($tzId);
-        } catch (\Exception) {
-            return new DateTimeZone('UTC');
-        }
-    }
-
-    /**
-     * @param array<string, list<array{params: array<string,string>, value: string}>> $props
+     * @param array<string, list<array{params: array<string, string>, value: string}>> $props
      * @param array<string, DateTimeZone>                                             $tzMap
      */
     private function buildTodo(array $props, array $tzMap): ICalTodo
     {
-        $uid = $this->firstValue($props, 'UID') ?? uniqid('todo_', true);
-
-        $due     = null;
-        $dtStart = null;
-        if (isset($props['DUE'])) {
-            $e   = $props['DUE'][0];
-            $due = $this->parseDateTime($e['value'], $e['params'], $tzMap);
-        }
-        if (isset($props['DTSTART'])) {
-            $e       = $props['DTSTART'][0];
-            $dtStart = $this->parseDateTime($e['value'], $e['params'], $tzMap);
-        }
+        $uid = $this->textValue($props, 'UID') ?? uniqid('todo_', true);
 
         return new ICalTodo(
             uid:             $uid,
-            summary:         $this->firstValue($props, 'SUMMARY'),
-            description:     $this->firstValue($props, 'DESCRIPTION'),
-            due:             $due,
-            dtStart:         $dtStart,
-            status:          $this->firstValue($props, 'STATUS') ?? 'NEEDS-ACTION',
+            summary:         $this->textValue($props, 'SUMMARY'),
+            description:     $this->textValue($props, 'DESCRIPTION'),
+            due:             $this->dateProp($props, 'DUE', $tzMap),
+            dtStart:         $this->dateProp($props, 'DTSTART', $tzMap),
+            status:          strtoupper(trim($this->firstValue($props, 'STATUS') ?? 'NEEDS-ACTION')),
             priority:        (int) ($this->firstValue($props, 'PRIORITY') ?? 0),
             percentComplete: (int) ($this->firstValue($props, 'PERCENT-COMPLETE') ?? 0),
         );
     }
 
     /**
-     * @param array<string, list<array{params: array<string,string>, value: string}>> $props
+     * @param array<string, list<array{params: array<string, string>, value: string}>> $props
      */
     private function buildAlarm(array $props): ?VAlarm
     {
@@ -526,18 +695,50 @@ final class ICalParser
             return null;
         }
         return new VAlarm(
-            action:      strtoupper($action),
-            trigger:     $trigger,
-            description: $this->firstValue($props, 'DESCRIPTION'),
-            summary:     $this->firstValue($props, 'SUMMARY'),
+            action:      strtoupper(trim($action)),
+            trigger:     trim($trigger),
+            description: $this->textValue($props, 'DESCRIPTION'),
+            summary:     $this->textValue($props, 'SUMMARY'),
         );
     }
 
+    // -------------------------------------------------------------------------
+    // Property helpers
+    // -------------------------------------------------------------------------
+
     /**
-     * @param array<string, list<array{params: array<string,string>, value: string}>> $props
+     * @param array<string, list<array{params: array<string, string>, value: string}>> $props
      */
     private function firstValue(array $props, string $name): ?string
     {
         return isset($props[$name]) ? $props[$name][0]['value'] : null;
+    }
+
+    /**
+     * @param array<string, list<array{params: array<string, string>, value: string}>> $props
+     */
+    private function textValue(array $props, string $name): ?string
+    {
+        $value = $this->firstValue($props, $name);
+        if ($value === null) {
+            return null;
+        }
+        return in_array($name, self::TEXT_PROPERTIES, true) ? self::unescapeText($value) : $value;
+    }
+
+    /**
+     * @param array<string, list<array{params: array<string, string>, value: string}>> $props
+     * @param array<string, DateTimeZone>                                             $tzMap
+     */
+    private function dateProp(array $props, string $name, array $tzMap): ?DateTimeImmutable
+    {
+        $entry = $props[$name][0] ?? null;
+        return $entry !== null ? $this->parseDateTime($entry['value'], $entry['params'], $tzMap) : null;
+    }
+
+    private static function stripMailto(string $value): string
+    {
+        $value = trim($value);
+        return strncasecmp($value, 'mailto:', 7) === 0 ? substr($value, 7) : $value;
     }
 }

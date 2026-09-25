@@ -60,8 +60,8 @@ Each event is serialised as:
 {
     "id":    "event-uid@source",
     "title": "Team meeting",
-    "start": "2025-06-01T09:00:00",
-    "end":   "2025-06-01T10:00:00",
+    "start": "2025-06-01T09:00:00+02:00",
+    "end":   "2025-06-01T10:00:00+02:00",
     "allDay": false,
     "color": "#e74c3c",
     "extendedProps": {
@@ -78,9 +78,9 @@ Each event is serialised as:
 |-------|-------|
 | `id` | `ICalEvent::$uid` |
 | `title` | `ICalEvent::$summary` |
-| `start` | ISO 8601 date (`Y-m-d`) for all-day events, datetime (`Y-m-d\TH:i:s`) for timed |
-| `end` | Same format, or `null` if no end time |
-| `allDay` | `true` when `DTSTART` has no time component (midnight `00:00:00`) |
+| `start` | ISO 8601 date (`Y-m-d`) for all-day events, datetime with UTC offset (`Y-m-d\TH:i:sP`, e.g. `2025-06-01T10:00:00+00:00`) for timed |
+| `end` | Same format, or `null` if no end time — for all-day events the **exclusive** end date (as in iCal and FullCalendar) |
+| `allDay` | `ICalEvent::$allDay` — `true` for DATE-valued (`VALUE=DATE`) events. A timed event at midnight stays `false` |
 | `color` | `COLOR` property or `null` |
 | `extendedProps` | description, location, categories, status, url |
 
@@ -101,8 +101,11 @@ $arr = JsonSerializer::fromEvents($events)
     ->forRange(new DateTimeImmutable('2025-01-06'), new DateTimeImmutable('2025-01-20'))
     ->toArray();
 
-// Returns Jan 6 (normal), Jan 13 (override → title changed, start = T14:00:00), Jan 20 (normal)
+// Returns Jan 6 (normal), Jan 14 (override → title changed, start = T14:00:00+01:00), Jan 20 (normal)
 ```
+
+`forRange()` includes every instance that **overlaps** the range — also multi-day events that started before `$from`
+and are still running.
 
 ---
 
@@ -112,8 +115,11 @@ $arr = JsonSerializer::fromEvents($events)
 // Static factory — accepts list<ICalEvent>
 $serializer = JsonSerializer::fromEvents($events);
 
-// Set the date range for expansion of recurring events
+// Set the date range for expansion of recurring events (instances overlapping [from, to])
 $serializer = $serializer->forRange($from, $to);
+
+// Optional: convert timed events to one timezone (all-day events are unaffected)
+$serializer = $serializer->inTimezone(new DateTimeZone('Europe/Bratislava'));
 
 // Return as PHP array (list of associative arrays)
 $array = $serializer->toArray();
@@ -165,8 +171,8 @@ scheduler.load('/api/events', 'json'); // DHTMLX can consume arrays via custom p
 const dhtmlxEvents = events.map(e => ({
     id:         e.id,
     text:       e.title,
-    start_date: e.start.replace('T', ' '),
-    end_date:   e.end?.replace('T', ' '),
+    start_date: new Date(e.start), // timed values carry a UTC offset — let Date parse them
+    end_date:   e.end ? new Date(e.end) : null,
 }));
 scheduler.parse(dhtmlxEvents);
 ```

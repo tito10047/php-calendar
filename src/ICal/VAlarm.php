@@ -33,26 +33,19 @@ final class VAlarm
         return new self(action: 'AUDIO', trigger: $trigger);
     }
 
+    /** CRLF-joined VALARM block (unfolded). All values are escaped — safe for untrusted input. */
     public function toIcalLines(): string
     {
         $lines = [
             'BEGIN:VALARM',
-            'ACTION:' . $this->action,
-            'TRIGGER:' . $this->trigger,
+            'ACTION:' . ICalFormatter::token($this->action, 'DISPLAY'),
+            'TRIGGER:' . ICalFormatter::value($this->trigger),
         ];
         if ($this->description !== null) {
-            $lines[] = 'DESCRIPTION:' . str_replace(
-                ['\\', ';', ',', "\n"],
-                ['\\\\', '\;', '\,', '\n'],
-                $this->description,
-            );
+            $lines[] = 'DESCRIPTION:' . ICalFormatter::text($this->description);
         }
         if ($this->summary !== null) {
-            $lines[] = 'SUMMARY:' . str_replace(
-                ['\\', ';', ',', "\n"],
-                ['\\\\', '\;', '\,', '\n'],
-                $this->summary,
-            );
+            $lines[] = 'SUMMARY:' . ICalFormatter::text($this->summary);
         }
         $lines[] = 'END:VALARM';
         return implode("\r\n", $lines);

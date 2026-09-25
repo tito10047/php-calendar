@@ -61,6 +61,44 @@ class RoomBookingLoader implements ResourceDataLoaderInterface
 }
 ```
 
+#### Batch loading (one query for all resources)
+
+With a plain `ResourceDataLoaderInterface`, `load()` runs once per resource. Implement
+`BatchResourceDataLoaderInterface` instead and `ResourceCalendar` calls `loadAll()` **once** with
+every resource — `load()` is then never called.
+
+```php
+use Tito10047\Calendar\Resource\BatchResourceDataLoaderInterface;
+use Tito10047\Calendar\Resource\ResourceInterface;
+
+class RoomBookingBatchLoader implements BatchResourceDataLoaderInterface
+{
+    private array $byResource = [];
+
+    public function loadAll(array $resources, DateTimeImmutable $from, DateTimeImmutable $to): void
+    {
+        $ids = array_map(fn (ResourceInterface $r) => $r->getResourceId(), $resources);
+        $bookings = $this->db->query(
+            'SELECT * FROM bookings WHERE room_id IN (?) AND date BETWEEN ? AND ?',
+            [$ids, $from->format('Y-m-d'), $to->format('Y-m-d')]
+        );
+        foreach ($bookings as $booking) {
+            $this->byResource[$booking['room_id']][$booking['date']][] = $booking;
+        }
+    }
+
+    public function load(ResourceInterface $resource, DateTimeImmutable $from, DateTimeImmutable $to): void
+    {
+        $this->loadAll([$resource], $from, $to); // required by the parent interface; unused by ResourceCalendar
+    }
+
+    public function getData(ResourceInterface $resource, DateTimeImmutable $date): array
+    {
+        return $this->byResource[$resource->getResourceId()][$date->format('Y-m-d')] ?? [];
+    }
+}
+```
+
 ### 3. Build the resource calendar
 
 ```php
@@ -84,6 +122,7 @@ $rc = new ResourceCalendar($baseCalendar, $rooms, new RoomBookingLoader($db));
 ```php
 $table = $rc->getResourceTable();
 // array<resourceId, Day[][]> — same Day[][] shape as Calendar::getDaysTable()
+// (inner tables keyed [yearWeek e.g. 202445][isoDay 1–7])
 ```
 
 ```twig
@@ -100,7 +139,7 @@ $table = $rc->getResourceTable();
         {% for resource in resources %}
             <tr>
                 <td class="resource-name">{{ resource.resourceName }}</td>
-                {% for weekNum, week in table[resource.resourceId] %}
+                {% for weekKey, week in table[resource.resourceId] %}
                     {% for day in week %}
                         <td class="{{ day.enabled ? '' : 'unavailable' }}">
                             {% for booking in day.data ?? [] %}
@@ -124,3 +163,4 @@ The base calendar's `disabledDayNames`, `disabledDays`, `startDay`, and `daysGen
 to every resource row — shared time axis, resource-specific data.
 
 Results are lazy-computed and cached per resource. Calling `getDaysTableForResource()` twice for the same resource does not trigger a second `load()`.
+If the loader implements `BatchResourceDataLoaderInterface`, `loadAll()` is called once (on first access, with all resources and the base calendar's `getDateRange()`) and every per-resource table reads from that shared state.

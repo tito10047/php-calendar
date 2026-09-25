@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tito10047\Calendar\View;
 
 use DateTimeImmutable;
+use Tito10047\Calendar\Enum\WeekStart;
 use Tito10047\Calendar\ICal\ICalEvent;
 
 /**
@@ -22,6 +23,11 @@ use Tito10047\Calendar\ICal\ICalEvent;
  *           echo $entry->event->summary . ' on ' . $entry->date->format('Y-m-d');
  *       }
  *   }
+ *
+ * Entries are per instance: recurring events are expanded with RECURRENCE-ID overrides applied
+ * and $entry->event carries the instance's own dtStart/dtEnd. Timed events are shown in the
+ * timezone of the range passed to forRange(); all-day events keep their calendar date. Events
+ * already running when the range starts are listed on the first day of the range.
  */
 final class AgendaView
 {
@@ -31,6 +37,7 @@ final class AgendaView
     private DateTimeImmutable $from;
     private DateTimeImmutable $to;
     private AgendaGrouping $grouping = AgendaGrouping::Day;
+    private WeekStart $weekStart     = WeekStart::Monday;
 
     /** @param list<ICalEvent> $events */
     private function __construct(array $events)
@@ -58,6 +65,14 @@ final class AgendaView
     {
         $clone          = clone $this;
         $clone->grouping = $grouping;
+        return $clone;
+    }
+
+    /** First day of the week used by AgendaGrouping::Week (default Monday). */
+    public function withWeekStart(WeekStart $weekStart): self
+    {
+        $clone            = clone $this;
+        $clone->weekStart = $weekStart;
         return $clone;
     }
 
@@ -95,34 +110,43 @@ final class AgendaView
     // Helpers
     // -------------------------------------------------------------------------
 
-    /** @return list<AgendaEntry> sorted by date asc */
+    /** @return list<AgendaEntry> sorted by date asc (all-day entries first within a day) */
     private function collectEntries(): array
     {
+        $tz      = $this->from->getTimezone();
         $entries = [];
         foreach ($this->events as $event) {
-            foreach ($event->occurrences($this->from, $this->to) as $occurrence) {
-                // restore original time component from dtStart
-                if ($event->dtStart->format('H:i:s') !== '00:00:00') {
-                    $occurrence = $occurrence->setTime(
-                        (int) $event->dtStart->format('H'),
-                        (int) $event->dtStart->format('i'),
-                        (int) $event->dtStart->format('s'),
-                    );
+            foreach ($event->expandOccurrences($this->from, $this->to) as $instance) {
+                $date = $instance->allDay
+                    ? new DateTimeImmutable($instance->dtStart->format('Y-m-d'), $tz)
+                    : $instance->dtStart->setTimezone($tz);
+                if ($date < $this->from) {
+                    $date = $this->from; // started before the range, still running
                 }
-                $entries[] = new AgendaEntry($event, $occurrence);
+                if (!$instance->allDay && $instance->dtStart->getTimezone()->getName() !== $tz->getName()) {
+                    $instance = $instance->withDates($instance->dtStart->setTimezone($tz), $instance->dtEnd?->setTimezone($tz));
+                }
+                $entries[] = new AgendaEntry($instance, $date);
             }
         }
 
-        usort($entries, fn (AgendaEntry $a, AgendaEntry $b) => $a->date <=> $b->date);
+        usort($entries, static fn (AgendaEntry $a, AgendaEntry $b) => [$a->date->format('Y-m-d'), !$a->event->allDay, $a->date]
+            <=> [$b->date->format('Y-m-d'), !$b->event->allDay, $b->date]);
 
         return $entries;
+    }
+
+    private function weekStartOf(DateTimeImmutable $date): DateTimeImmutable
+    {
+        $back = ((int) $date->format('N') - $this->weekStart->value + 7) % 7;
+        return $date->setTime(0, 0, 0)->modify("-{$back} days");
     }
 
     private function bucketKey(DateTimeImmutable $date): string
     {
         return match ($this->grouping) {
             AgendaGrouping::Day   => $date->format('Y-m-d'),
-            AgendaGrouping::Week  => $date->format('o-W'),   // ISO year-week
+            AgendaGrouping::Week  => $this->weekStartOf($date)->format('Y-m-d'),
             AgendaGrouping::Month => $date->format('Y-m'),
         };
     }
@@ -131,7 +155,7 @@ final class AgendaView
     {
         return match ($this->grouping) {
             AgendaGrouping::Day   => $date->setTime(0, 0, 0),
-            AgendaGrouping::Week  => $date->modify('monday this week')->setTime(0, 0, 0),
+            AgendaGrouping::Week  => $this->weekStartOf($date),
             AgendaGrouping::Month => $date->modify('first day of this month')->setTime(0, 0, 0),
         };
     }
@@ -142,8 +166,8 @@ final class AgendaView
             AgendaGrouping::Day   => $date->format('l, j F Y'),
             AgendaGrouping::Week  => sprintf(
                 '%s – %s',
-                $date->modify('monday this week')->format('j M Y'),
-                $date->modify('sunday this week')->format('j M Y'),
+                $this->weekStartOf($date)->format('j M Y'),
+                $this->weekStartOf($date)->modify('+6 days')->format('j M Y'),
             ),
             AgendaGrouping::Month => $date->format('F Y'),
         };

@@ -19,6 +19,9 @@ final class Calendar implements CalendarInterface
     /** @var non-empty-list<DateTimeImmutable> */
     private array $days;
 
+    /** @var array<int, array<int, Day>>|null memoised getDaysTable() result */
+    private ?array $daysTable = null;
+
     /**
      * @param array<string, DateTimeImmutable> $disabledDays    Date-specific disabled dates (Y-m-d keys)
      * @param list<DayName>                    $disabledDayNames Structural weekday pattern (e.g. weekends)
@@ -44,10 +47,17 @@ final class Calendar implements CalendarInterface
     // Named constructors
     // -------------------------------------------------------------------------
 
-    public static function forMonth(int $year, int $month, WeekStart $startDay = WeekStart::Monday): self
-    {
+    public static function forMonth(
+        int $year,
+        int $month,
+        WeekStart $startDay = WeekStart::Monday,
+        ?\DateTimeZone $timezone = null,
+    ): self {
+        if ($month < 1 || $month > 12) {
+            throw new \InvalidArgumentException("Month must be 1–12, got {$month}");
+        }
         return new self(
-            date: new DateTimeImmutable(sprintf('%04d-%02d-01', $year, $month)),
+            date: new DateTimeImmutable(sprintf('%04d-%02d-01', $year, $month), $timezone),
             daysGenerator: CalendarType::Monthly,
             startDay: $startDay,
         );
@@ -65,9 +75,10 @@ final class Calendar implements CalendarInterface
     public static function forToday(
         DaysGeneratorInterface $type = CalendarType::Monthly,
         WeekStart $startDay = WeekStart::Monday,
+        ?\DateTimeZone $timezone = null,
     ): self {
         return new self(
-            date: new DateTimeImmutable('today'),
+            date: new DateTimeImmutable('today', $timezone),
             daysGenerator: $type,
             startDay: $startDay,
         );
@@ -94,14 +105,16 @@ final class Calendar implements CalendarInterface
      */
     public static function fromConfig(CalendarConfig $config, array $data = []): self
     {
+        $tz = $config->date->getTimezone();
+
         $disabledDays = [];
         foreach ($config->getDisabledDayKeys() as $key) {
-            $disabledDays[$key] = new DateTimeImmutable($key);
+            $disabledDays[$key] = new DateTimeImmutable($key, $tz);
         }
 
         $enabledDays = [];
         foreach ($config->getEnabledDayKeys() as $key) {
-            $enabledDays[$key] = new DateTimeImmutable($key);
+            $enabledDays[$key] = new DateTimeImmutable($key, $tz);
         }
 
         $calendar = new self(
@@ -171,6 +184,7 @@ final class Calendar implements CalendarInterface
         return !$this->resolveEnabled($day);
     }
 
+    /** Whether $day is the 1st of the reference date's month (for any calendar type). */
     public function isFirstDay(\DateTimeInterface|Day $day): bool
     {
         if ($day instanceof Day) {
@@ -179,12 +193,44 @@ final class Calendar implements CalendarInterface
         return $this->date->modify('first day of this month')->format('Y-m-d') === $day->format('Y-m-d');
     }
 
+    /** Whether $day is the last day of the reference date's month (for any calendar type). */
     public function isLastDay(\DateTimeInterface|Day $day): bool
     {
         if ($day instanceof Day) {
             $day = $day->date;
         }
         return $this->date->modify('last day of this month')->format('Y-m-d') === $day->format('Y-m-d');
+    }
+
+    /**
+     * Whether $day is the first day of the displayed period: the 1st of the month for month
+     * grids (ghost padding excluded), otherwise the first day of the grid (week, work week,
+     * fromDateRange()).
+     */
+    public function isFirstDayOfPeriod(\DateTimeInterface|Day $day): bool
+    {
+        if ($day instanceof Day) {
+            $day = $day->date;
+        }
+        if ($this->daysGenerator->hasGhostDays()) {
+            return $this->isFirstDay($day);
+        }
+        return $this->days[0]->format('Y-m-d') === $day->format('Y-m-d');
+    }
+
+    /**
+     * Whether $day is the last day of the displayed period: the last day of the month for month
+     * grids, otherwise the last day of the grid.
+     */
+    public function isLastDayOfPeriod(\DateTimeInterface|Day $day): bool
+    {
+        if ($day instanceof Day) {
+            $day = $day->date;
+        }
+        if ($this->daysGenerator->hasGhostDays()) {
+            return $this->isLastDay($day);
+        }
+        return $this->days[array_key_last($this->days)]->format('Y-m-d') === $day->format('Y-m-d');
     }
 
     // -------------------------------------------------------------------------
@@ -215,10 +261,8 @@ final class Calendar implements CalendarInterface
      */
     public function nextPeriod(): self
     {
-        $date = $this->date->add($this->daysGenerator->getNavigationStep());
-        if ($this->daysGenerator->hasGhostDays()) {
-            $date = $date->modify('first day of this month');
-        }
+        // Snap month grids to the 1st *before* adding a month, so Jan 31 + 1 month is February
+        $date = $this->periodAnchor()->add($this->daysGenerator->getNavigationStep());
         return new self(
             date: $date,
             daysGenerator: $this->daysGenerator,
@@ -235,10 +279,7 @@ final class Calendar implements CalendarInterface
      */
     public function prevPeriod(): self
     {
-        $date = $this->date->sub($this->daysGenerator->getNavigationStep());
-        if ($this->daysGenerator->hasGhostDays()) {
-            $date = $date->modify('first day of this month');
-        }
+        $date = $this->periodAnchor()->sub($this->daysGenerator->getNavigationStep());
         return new self(
             date: $date,
             daysGenerator: $this->daysGenerator,
@@ -337,11 +378,20 @@ final class Calendar implements CalendarInterface
         return $this->disableDays(...$days);
     }
 
-    public function disableWeek(int $weekNum): self
+    /**
+     * Disable a week.
+     *
+     *   disableWeek(45)        — every day in ISO week 45 (of any year present in the grid)
+     *   disableWeek(45, 2024)  — ISO week 45 of ISO year 2024 only
+     *   disableWeek(202445)    — the grid row with that getDaysTable() key (respects WeekStart)
+     */
+    public function disableWeek(int $weekNum, ?int $year = null): self
     {
         $disabled = array_filter(
             $this->days,
-            static fn (DateTimeImmutable $d) => (int) $d->format('W') === $weekNum,
+            fn (DateTimeImmutable $d) => $weekNum > 100
+                ? $this->rowKey($d) === $weekNum
+                : (int) $d->format('W') === $weekNum && ($year === null || (int) $d->format('o') === $year),
         );
         return $this->disableDays(...$disabled);
     }
@@ -364,45 +414,44 @@ final class Calendar implements CalendarInterface
     // -------------------------------------------------------------------------
 
     /**
-     * Build the full calendar grid. Triggers DayDataLoaderInterface::load() for the range.
+     * Build the full calendar grid. Triggers DayDataLoaderInterface::load() for the range once;
+     * the result is memoised for this (immutable) instance.
      *
-     * Outer key = ISO week number (1–53).
-     * Inner key = ISO weekday number (1 = Monday … 7 = Sunday).
+     * Outer key = ISO week-year and week number of the row as an int, e.g. 202445 for week 45 of
+     *             2024 (use Day::getIsoWeek() or `$key % 100` for the plain week number). Keys are
+     *             unique across years and ascend chronologically, so the order survives
+     *             json_encode() and ksort(). A row always starts on the configured WeekStart; its
+     *             key is the ISO week of the row's Monday.
+     * Inner key = ISO weekday number (1 = Monday … 7 = Sunday), in WeekStart order.
      * Ghost days (adjacent-month padding) are present in Monthly grids to fill complete week rows.
      *
-     * @return array<int, array<int, Day>>  [weekNum => [isoDayNum => Day]]
+     * @return array<int, array<int, Day>>  [yearWeek => [isoDayNum => Day]]
      */
     public function getDaysTable(): array
     {
-        $thisMonthNum  = $this->date->format('m');
+        if ($this->daysTable !== null) {
+            return $this->daysTable;
+        }
+
+        $thisMonth     = $this->date->format('Y-m');
         $ghostsEnabled = $this->daysGenerator->hasGhostDays();
-        $days          = $this->days;
-        $today         = date('Y-m-d');
+        $today         = (new DateTimeImmutable('now', $this->date->getTimezone()))->format('Y-m-d');
         $rows          = [];
 
         // Use the instance returned by load() — immutable loaders return a new populated object.
-        $loader = $this->dataLoader?->load($days[0], $days[array_key_last($days)]);
+        $loader = $this->dataLoader?->load($this->days[0], $this->days[array_key_last($this->days)]);
 
-        while ($days !== []) {
-            $firstDay = $days[0];
-            $weekNum  = (int) $firstDay->format('W');
-            $row      = [];
-
-            for ($i = (int) $firstDay->format('N'); $i <= 7 && $days !== []; $i++) {
-                $day    = array_shift($days);
-                $row[$i] = new Day(
-                    date: $day,
-                    ghost: $ghostsEnabled && $day->format('m') !== $thisMonthNum,
-                    today: $day->format('Y-m-d') === $today,
-                    enabled: $this->resolveEnabled($day),
-                    data: $loader?->getData($day),
-                );
-            }
-
-            $rows[$weekNum] = $row;
+        foreach ($this->days as $day) {
+            $rows[$this->rowKey($day)][(int) $day->format('N')] = new Day(
+                date: $day,
+                ghost: $ghostsEnabled && $day->format('Y-m') !== $thisMonth,
+                today: $day->format('Y-m-d') === $today,
+                enabled: $this->resolveEnabled($day),
+                data: $loader?->getData($day),
+            );
         }
 
-        return $rows;
+        return $this->daysTable = $rows;
     }
 
     // -------------------------------------------------------------------------
@@ -415,6 +464,21 @@ final class Calendar implements CalendarInterface
      *   2. disabledDays — explicit date disable, always off
      *   3. disabledDayNames — weekday pattern, off unless overridden by layer 1
      */
+    /** getDaysTable() row key of $day: ISO year*100 + ISO week of the Monday in its WeekStart-aligned row. */
+    private function rowKey(DateTimeImmutable $day): int
+    {
+        $weekStart = $this->startDay->value;
+        $rowStart  = $day->modify('-' . (((int) $day->format('N') - $weekStart + 7) % 7) . ' days');
+        $monday    = $rowStart->modify('+' . ((1 - $weekStart + 7) % 7) . ' days');
+        return (int) $monday->format('oW');
+    }
+
+    /** Reference date navigation starts from: the 1st of the month for month grids. */
+    private function periodAnchor(): DateTimeImmutable
+    {
+        return $this->daysGenerator->hasGhostDays() ? $this->date->modify('first day of this month') : $this->date;
+    }
+
     private function resolveEnabled(DateTimeImmutable $date): bool
     {
         $key = $date->format('Y-m-d');

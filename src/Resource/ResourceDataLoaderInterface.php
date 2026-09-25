@@ -11,6 +11,7 @@ use DateTimeImmutable;
  *
  * Implement this to back a ResourceCalendar with real data (database, API, etc.).
  * load() is called once per resource per render; getData() is called per day.
+ * To avoid one query per resource, implement BatchResourceDataLoaderInterface instead.
  */
 interface ResourceDataLoaderInterface
 {

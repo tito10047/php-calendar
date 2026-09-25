@@ -13,15 +13,17 @@ use Tito10047\Calendar\ICal\ICalEvent;
  * Output schema per event:
  *   id            — event UID
  *   title         — SUMMARY
- *   start         — ISO 8601 (date-only for all-day events, datetime otherwise)
- *   end           — ISO 8601 or null
- *   allDay        — true when DTSTART has no time component
+ *   start         — ISO 8601: date-only (Y-m-d) for all-day events, otherwise a datetime with
+ *                   UTC offset (2025-06-15T09:00:00+02:00) so clients never guess the timezone
+ *   end           — ISO 8601 or null; exclusive end date for all-day events
+ *   allDay        — true for all-day (DATE-valued) events — ICalEvent::$allDay
  *   color         — COLOR property or null
  *   extendedProps — description, location, categories, status
  *
  * Usage:
  *   $json = JsonSerializer::fromEvents($events)
- *       ->forRange($from, $to)
+ *       ->forRange($from, $to)                        // occurrences overlapping the range
+ *       ->inTimezone(new DateTimeZone('Europe/Bratislava')) // optional: convert timed events
  *       ->toJson();
  */
 final class JsonSerializer
@@ -31,6 +33,7 @@ final class JsonSerializer
 
     private ?DateTimeImmutable $from = null;
     private ?DateTimeImmutable $to   = null;
+    private ?\DateTimeZone $timezone = null;
 
     /** @param list<ICalEvent> $events */
     private function __construct(array $events)
@@ -52,6 +55,14 @@ final class JsonSerializer
         return $clone;
     }
 
+    /** Convert timed events to this timezone before formatting (all-day events are unaffected). */
+    public function inTimezone(\DateTimeZone $timezone): self
+    {
+        $clone           = clone $this;
+        $clone->timezone = $timezone;
+        return $clone;
+    }
+
     /**
      * @return list<array<string, mixed>>
      */
@@ -61,8 +72,8 @@ final class JsonSerializer
 
         foreach ($this->events as $event) {
             if ($this->from !== null && $this->to !== null) {
-                // expandOccurrences returns full ICalEvent objects with dates set,
-                // and handles RECURRENCE-ID overrides transparently
+                // expandOccurrences returns one ICalEvent per instance overlapping the range
+                // (including events that started earlier) and applies RECURRENCE-ID overrides
                 foreach ($event->expandOccurrences($this->from, $this->to) as $occurrence) {
                     $result[] = $this->buildEntry($occurrence);
                 }
@@ -90,17 +101,13 @@ final class JsonSerializer
     /** @return array<string, mixed> */
     private function buildEntry(ICalEvent $event): array
     {
-        $allDay = $this->isAllDay($event->dtStart);
+        $allDay = $event->allDay;
 
         return [
             'id'            => $event->uid,
             'title'         => $event->summary ?? '',
-            'start'         => $allDay
-                ? $event->dtStart->format('Y-m-d')
-                : $event->dtStart->format('Y-m-d\TH:i:s'),
-            'end'           => $event->dtEnd !== null
-                ? ($allDay ? $event->dtEnd->format('Y-m-d') : $event->dtEnd->format('Y-m-d\TH:i:s'))
-                : null,
+            'start'         => $this->formatDate($event->dtStart, $allDay),
+            'end'           => $event->dtEnd !== null ? $this->formatDate($event->dtEnd, $allDay) : null,
             'allDay'        => $allDay,
             'color'         => $event->color,
             'extendedProps' => [
@@ -113,8 +120,14 @@ final class JsonSerializer
         ];
     }
 
-    private function isAllDay(DateTimeImmutable $dt): bool
+    private function formatDate(DateTimeImmutable $date, bool $allDay): string
     {
-        return $dt->format('H:i:s') === '00:00:00';
+        if ($allDay) {
+            return $date->format('Y-m-d');
+        }
+        if ($this->timezone !== null) {
+            $date = $date->setTimezone($this->timezone);
+        }
+        return $date->format('Y-m-d\TH:i:sP');
     }
 }

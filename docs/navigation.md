@@ -9,7 +9,11 @@
 | `CalendarType::Monthly` | 1 month |
 | `CalendarType::Weekly` | 1 week |
 | `CalendarType::WorkWeek` | 1 week |
+| `fromDateRange()` / `DateRangeGenerator` | the window's own length (e.g. a 10-day window moves by 10 days) |
 | Custom `DaysGeneratorInterface` | whatever `getNavigationStep()` returns |
+
+Month grids navigate from the 1st of the month, so a reference date on the 29th–31st never skips a
+month (`Calendar::forMonth(2025, 1)->withDate(new DateTimeImmutable('2025-01-31'))->nextPeriod()` is February).
 
 ```php
 $november = Calendar::forMonth(2024, 11);
@@ -33,6 +37,8 @@ $week2 = $week1->nextPeriod(); // Mon 11 – Sun 17 Nov
 $march = $calendar->withDate(new DateTimeImmutable('2025-03-01'));
 ```
 
+For a `fromDateRange()` calendar, `withDate()` moves the whole window so it starts at the new date (same length).
+
 ---
 
 ## Grid boundaries
@@ -44,6 +50,13 @@ $range = $calendar->getDateRange();
 
 The range covers the actual grid — for `Monthly` this includes ghost-day padding. Useful for building a single bulk query before calling `getDaysTable()`.
 
+To test whether a day is at the edge of the displayed period, use `isFirstDayOfPeriod()` / `isLastDayOfPeriod()` — the 1st / last day of the month for `Monthly` grids (ghost padding excluded), otherwise the first / last day of the grid. `isFirstDay()` / `isLastDay()` keep month semantics for every calendar type.
+
+```php
+$calendar->isFirstDayOfPeriod($day); // bool — accepts Day or DateTimeInterface
+$calendar->isLastDayOfPeriod($day);
+```
+
 ---
 
 ## CalendarConfig — serialisable configuration
@@ -54,21 +67,37 @@ The range covers the actual grid — for `Monthly` this includes ghost-day paddi
 use Tito10047\Calendar\CalendarConfig;
 use Tito10047\Calendar\Enum\CalendarType;
 use Tito10047\Calendar\Enum\DayName;
+use Tito10047\Calendar\Enum\WeekStart;
 
 $config = new CalendarConfig(
     date:             new DateTimeImmutable('2024-11-01'),
     type:             CalendarType::Monthly,
-    startDay:         DayName::Monday,
+    startDay:         WeekStart::Monday,
     disabledDayNames: [DayName::Saturday, DayName::Sunday],
     disabledDays:     [new DateTimeImmutable('2024-11-11')],
     enabledDays:      [new DateTimeImmutable('2024-11-30')],
 );
 
 echo $config->cacheKey();
-// calendar:2024-11-01:Monthly:Monday:<hash>:<hash>:<hash>
+// calendar:2024-11-01:<timezone>:Monthly:Monday:<hash>:<hash>:<hash>
 ```
 
-The key is deterministic and order-independent — the order of items in the disable/enable arrays does not affect the key.
+The key is deterministic and order-independent — the order of items in the disable/enable arrays does not affect the key. It includes the timezone of `date`, so the same date in two timezones yields two keys.
+
+`disabledDayNames` must contain only `DayName` values (anything else throws `InvalidArgumentException`); duplicates are removed.
+
+`type` accepts any `DaysGeneratorInterface`, not only `CalendarType` — e.g. a fixed-length window:
+
+```php
+use Tito10047\Calendar\DataLoader\DateRangeGenerator;
+
+$config = new CalendarConfig(
+    date: new DateTimeImmutable('2024-11-04'),
+    type: new DateRangeGenerator(new DateTimeImmutable('2024-11-04'), new DateTimeImmutable('2024-11-17')),
+);
+```
+
+Custom generators must be serialisable for `cacheKey()` to be stable.
 
 ---
 
@@ -85,7 +114,14 @@ $config = new CalendarConfig(
 // Load data — separate concern, cache independently
 $data = $cache->get($config->cacheKey(), function () use ($config, $loader) {
     ['from' => $from, 'to' => $to] = Calendar::fromConfig($config)->getDateRange();
-    return $loader->computeData($from, $to); // returns array<Y-m-d, array>
+
+    // Your own DayDataLoaderInterface, flattened into a plain Y-m-d => array map
+    $loaded = $loader->load($from, $to);
+    $data   = [];
+    for ($d = $from; $d <= $to; $d = $d->modify('+1 day')) {
+        $data[$d->format('Y-m-d')] = $loaded->getData($d);
+    }
+    return $data;
 });
 
 // Reconstruct calendar — no DB involved

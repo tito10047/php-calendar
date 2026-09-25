@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tito10047\Calendar\ICal;
 
 use DateTimeImmutable;
+use DateTimeZone;
 use Tito10047\Calendar\Enum\EventStatus;
 use Tito10047\Calendar\Recurrence\RecurrenceRule;
 
@@ -17,8 +18,14 @@ use Tito10047\Calendar\Recurrence\RecurrenceRule;
  * Timezone handling:
  *   - UTC datetimes are serialised with the Z suffix: DTSTART:20241101T120000Z
  *   - Named IANA timezone datetimes keep their zone: DTSTART;TZID=Europe/London:20241101T120000
+ *     and a matching VTIMEZONE component is emitted (disable with withTimezoneDefinitions(false)).
  *   - Numeric-offset timezones (+01:00) are normalised to UTC on export (offset information
  *     is lost — pass a proper DateTimeZone('Europe/Berlin') if you need to preserve the zone).
+ *   - All-day events are written as DATE values: DTSTART;VALUE=DATE:20241101
+ *   - DTSTAMP, CREATED and LAST-MODIFIED are always converted to UTC.
+ *
+ * Every user-supplied value is escaped (TEXT), quoted (parameters) or stripped of control
+ * characters (URIs, addresses), so untrusted input cannot inject properties or components.
  *
  * Usage:
  *   $ics = (new ICalExporter())
@@ -36,8 +43,9 @@ final class ICalExporter
     /** @var list<ICalEvent> */
     private array $events = [];
 
-    private string $calendarName = 'Calendar';
-    private string $prodId       = '-//php-calendar//php-calendar 2.0//EN';
+    private string $calendarName          = 'Calendar';
+    private string $prodId                = '-//php-calendar//php-calendar 3.0//EN';
+    private bool $timezoneDefinitions     = true;
 
     public function calendarName(string $name): self
     {
@@ -46,8 +54,17 @@ final class ICalExporter
         return $clone;
     }
 
+    /** Emit VTIMEZONE components for every named timezone used (default: on). */
+    public function withTimezoneDefinitions(bool $enabled = true): self
+    {
+        $clone = clone $this;
+        $clone->timezoneDefinitions = $enabled;
+        return $clone;
+    }
+
     /**
      * @param list<string> $categories
+     * @param bool         $allDay     Write DTSTART/DTEND as DATE values; $to is the exclusive end date
      */
     public function addEvent(
         string $title,
@@ -60,6 +77,7 @@ final class ICalExporter
         ?string $color = null,
         array $categories = [],
         ?EventStatus $status = null,
+        bool $allDay = false,
     ): self {
         $clone           = clone $this;
         $clone->events[] = new ICalEvent(
@@ -74,6 +92,7 @@ final class ICalExporter
             color:       $color,
             categories:  $categories,
             status:      $status,
+            allDay:      $allDay,
         );
         return $clone;
     }
@@ -92,12 +111,14 @@ final class ICalExporter
         ?string $color = null,
         array $categories = [],
         ?EventStatus $status = null,
+        ?DateTimeImmutable $end = null,
+        bool $allDay = false,
     ): self {
         $clone           = clone $this;
         $clone->events[] = new ICalEvent(
             uid:         $uid ?? $this->generateUid(),
             dtStart:     $start,
-            dtEnd:       null,
+            dtEnd:       $end,
             summary:     $title,
             description: $description,
             location:    $location,
@@ -106,6 +127,7 @@ final class ICalExporter
             color:       $color,
             categories:  $categories,
             status:      $status,
+            allDay:      $allDay,
         );
         return $clone;
     }
@@ -119,15 +141,8 @@ final class ICalExporter
 
     public function export(): string
     {
-        $now   = new DateTimeImmutable('now', new \DateTimeZone('UTC'));
-        $lines = [
-            'BEGIN:VCALENDAR',
-            'VERSION:2.0',
-            'PRODID:' . $this->prodId,
-            'CALSCALE:GREGORIAN',
-            'METHOD:PUBLISH',
-            'X-WR-CALNAME:' . $this->escapeText($this->calendarName),
-        ];
+        $now   = new DateTimeImmutable('now', new DateTimeZone('UTC'));
+        $lines = $this->headerLines();
 
         foreach ($this->events as $event) {
             array_push($lines, ...$this->buildEventLines($event, $now));
@@ -135,7 +150,7 @@ final class ICalExporter
 
         $lines[] = 'END:VCALENDAR';
 
-        return implode("\r\n", $this->fold($lines)) . "\r\n";
+        return implode("\r\n", ICalFormatter::fold($lines)) . "\r\n";
     }
 
     /**
@@ -146,20 +161,11 @@ final class ICalExporter
      */
     public function exportToStream($stream): void
     {
-        $now    = new DateTimeImmutable('now', new \DateTimeZone('UTC'));
-        $header = [
-            'BEGIN:VCALENDAR',
-            'VERSION:2.0',
-            'PRODID:' . $this->prodId,
-            'CALSCALE:GREGORIAN',
-            'METHOD:PUBLISH',
-            'X-WR-CALNAME:' . $this->escapeText($this->calendarName),
-        ];
-        $this->writeLines($stream, $header);
+        $now = new DateTimeImmutable('now', new DateTimeZone('UTC'));
+        $this->writeLines($stream, $this->headerLines());
 
         foreach ($this->events as $event) {
-            $lines = $this->buildEventLines($event, $now);
-            $this->writeLines($stream, $lines);
+            $this->writeLines($stream, $this->buildEventLines($event, $now));
         }
 
         fwrite($stream, "END:VCALENDAR\r\n");
@@ -169,48 +175,73 @@ final class ICalExporter
     // Helpers
     // -------------------------------------------------------------------------
 
+    /** @return list<string> */
+    private function headerLines(): array
+    {
+        $lines = [
+            'BEGIN:VCALENDAR',
+            'VERSION:2.0',
+            'PRODID:' . ICalFormatter::text($this->prodId),
+            'CALSCALE:GREGORIAN',
+            'METHOD:PUBLISH',
+            'X-WR-CALNAME:' . ICalFormatter::text($this->calendarName),
+        ];
+
+        if ($this->timezoneDefinitions) {
+            foreach ($this->collectTimezones() as $tzName => [$fromYear, $toYear]) {
+                array_push($lines, ...$this->buildTimezoneLines(new DateTimeZone($tzName), $fromYear, $toYear));
+            }
+        }
+
+        return $lines;
+    }
+
     /**
-     * Build the RFC 5545 lines for a single VEVENT (unfolded).
+     * Build the RFC 5545 lines for a VEVENT (unfolded) followed by its RECURRENCE-ID overrides.
      *
      * @return list<string>
      */
-    private function buildEventLines(ICalEvent $event, DateTimeImmutable $now): array
+    private function buildEventLines(ICalEvent $event, DateTimeImmutable $now, ?ICalEvent $master = null): array
     {
-        $lines = [];
+        $utc     = new DateTimeZone('UTC');
+        $uid     = $master !== null ? $master->uid : $event->uid;
+        $lines   = [];
         $lines[] = 'BEGIN:VEVENT';
-        $lines[] = 'UID:' . $event->uid;
-        $lines[] = 'DTSTAMP:' . ($event->dtStamp ?? $now)->format('Ymd\THis\Z');
+        $lines[] = 'UID:' . ICalFormatter::text($uid);
+        $lines[] = 'DTSTAMP:' . ($event->dtStamp ?? $now)->setTimezone($utc)->format('Ymd\THis\Z');
         if ($event->created !== null) {
-            $lines[] = 'CREATED:' . $event->created->format('Ymd\THis\Z');
+            $lines[] = 'CREATED:' . $event->created->setTimezone($utc)->format('Ymd\THis\Z');
         }
         if ($event->lastModified !== null) {
-            $lines[] = 'LAST-MODIFIED:' . $event->lastModified->format('Ymd\THis\Z');
+            $lines[] = 'LAST-MODIFIED:' . $event->lastModified->setTimezone($utc)->format('Ymd\THis\Z');
         }
         if ($event->sequence !== 0) {
             $lines[] = 'SEQUENCE:' . $event->sequence;
         }
-        $lines[] = $this->formatDtProp('DTSTART', $event->dtStart);
+        $lines[] = $this->formatDtProp('DTSTART', $event->dtStart, $event->allDay);
         if ($event->dtEnd !== null) {
-            $lines[] = $this->formatDtProp('DTEND', $event->dtEnd);
+            $lines[] = $this->formatDtProp('DTEND', $event->dtEnd, $event->allDay);
         }
         if ($event->recurrenceId !== null) {
-            $lines[] = $this->formatDtProp('RECURRENCE-ID', $event->recurrenceId);
+            $isDate  = $master !== null ? $master->allDay : $event->allDay;
+            $range   = $event->thisAndFuture ? ';RANGE=THISANDFUTURE' : '';
+            $lines[] = $this->formatDtProp('RECURRENCE-ID' . $range, $event->recurrenceId, $isDate);
         }
-        $lines[] = 'SUMMARY:' . $this->escapeText($event->summary ?? '');
+        $lines[] = 'SUMMARY:' . ICalFormatter::text($event->summary ?? '');
         if ($event->description !== null) {
-            $lines[] = 'DESCRIPTION:' . $this->escapeText($event->description);
+            $lines[] = 'DESCRIPTION:' . ICalFormatter::text($event->description);
         }
         if ($event->location !== null) {
-            $lines[] = 'LOCATION:' . $this->escapeText($event->location);
+            $lines[] = 'LOCATION:' . ICalFormatter::text($event->location);
         }
         if ($event->url !== null) {
-            $lines[] = 'URL:' . $event->url;
+            $lines[] = 'URL:' . ICalFormatter::value($event->url);
         }
         if ($event->color !== null) {
-            $lines[] = 'COLOR:' . $event->color;
+            $lines[] = 'COLOR:' . ICalFormatter::text($event->color);
         }
         if ($event->categories !== []) {
-            $lines[] = 'CATEGORIES:' . implode(',', array_map([$this, 'escapeText'], $event->categories));
+            $lines[] = 'CATEGORIES:' . implode(',', array_map(ICalFormatter::text(...), $event->categories));
         }
         if ($event->status !== null) {
             $lines[] = 'STATUS:' . $event->status->value;
@@ -225,21 +256,31 @@ final class ICalExporter
             $lines[] = 'PRIORITY:' . $event->priority;
         }
         if ($event->rrule !== null) {
-            $lines[] = 'RRULE:' . $event->rrule->toRruleString();
+            $lines[] = 'RRULE:' . $event->rrule->toRruleString($event->dtStart, $event->allDay);
+            foreach ($this->uniqueDates([...$event->exDates, ...$event->rrule->getExDates()]) as $exDate) {
+                $lines[] = $this->formatDtProp('EXDATE', $this->resolveDate($exDate, $event), $event->allDay);
+            }
+            foreach ($this->uniqueDates($event->rrule->getExtraDates()) as $rDate) {
+                $lines[] = $this->formatDtProp('RDATE', $this->resolveDate($rDate, $event), $event->allDay);
+            }
         }
         if ($event->organizer !== null) {
             $orgLine = 'ORGANIZER';
             if ($event->organizerName !== null) {
-                $orgLine .= ';CN=' . $event->organizerName;
+                $orgLine .= ';CN=' . ICalFormatter::param($event->organizerName);
             }
-            $orgLine .= ':mailto:' . $event->organizer;
+            $orgLine .= ':mailto:' . ICalFormatter::value($event->organizer);
             $lines[] = $orgLine;
         }
         foreach ($event->attendees as $attendee) {
             $lines[] = $attendee->toIcalLine();
         }
         foreach ($event->extensionProperties as $xName => $xValue) {
-            $lines[] = $xName . ':' . $xValue;
+            $name = ICalFormatter::token((string) $xName, 'X-UNKNOWN');
+            if (!str_starts_with($name, 'X-')) {
+                $name = 'X-' . $name;
+            }
+            $lines[] = $name . ':' . ICalFormatter::text($xValue);
         }
         foreach ($event->alarms as $alarm) {
             foreach (explode("\r\n", $alarm->toIcalLines()) as $alarmLine) {
@@ -247,6 +288,17 @@ final class ICalExporter
             }
         }
         $lines[] = 'END:VEVENT';
+
+        // RECURRENCE-ID overrides are separate components sharing the master's UID
+        if ($master === null) {
+            foreach ($event->modifiedOccurrences as $key => $override) {
+                if ($override->recurrenceId === null) {
+                    $override = $this->withRecurrenceId($override, $event, (string) $key);
+                }
+                array_push($lines, ...$this->buildEventLines($override, $now, $event));
+            }
+        }
+
         return $lines;
     }
 
@@ -258,59 +310,200 @@ final class ICalExporter
      */
     private function writeLines($stream, array $lines): void
     {
-        foreach ($this->fold($lines) as $line) {
+        foreach (ICalFormatter::fold($lines) as $line) {
             fwrite($stream, $line . "\r\n");
         }
     }
 
     /**
-     * Serialise a datetime property respecting the original timezone.
+     * Serialise a date / datetime property respecting the original timezone.
      *
+     * DATE                 → "PROPNAME;VALUE=DATE:YYYYMMDD"
      * UTC / numeric-offset → "PROPNAME:YYYYMMDDTHHmmssZ"
      * Named IANA timezone  → "PROPNAME;TZID=Zone/Name:YYYYMMDDTHHmmss"
      */
-    private function formatDtProp(string $propName, DateTimeImmutable $dt): string
+    private function formatDtProp(string $propName, DateTimeImmutable $dt, bool $isDate = false): string
     {
-        $tzName = $dt->getTimezone()->getName();
-
-        // Numeric offset (e.g. +01:00, -05:30) — normalise to UTC
-        if (preg_match('/^[+-]\d{2}:\d{2}$/', $tzName)) {
-            $tzName = 'UTC';
+        if ($isDate) {
+            return $propName . ';VALUE=DATE:' . $dt->format('Ymd');
         }
 
-        if ($tzName === 'UTC' || $tzName === 'Z') {
-            return $propName . ':' . $dt->setTimezone(new \DateTimeZone('UTC'))->format('Ymd\THis\Z');
+        $tzName = $this->namedTimezone($dt);
+        if ($tzName === null) {
+            return $propName . ':' . $dt->setTimezone(new DateTimeZone('UTC'))->format('Ymd\THis\Z');
         }
 
         // Named IANA timezone — preserve it with TZID parameter
-        return $propName . ';TZID=' . $tzName . ':' . $dt->format('Ymd\THis');
+        return $propName . ';TZID=' . ICalFormatter::param($tzName) . ':' . $dt->format('Ymd\THis');
+    }
+
+    /** IANA name of the value's timezone, or null for UTC / fixed offsets / abbreviations. */
+    private function namedTimezone(DateTimeImmutable $dt): ?string
+    {
+        $tz     = $dt->getTimezone();
+        $tzName = $tz->getName();
+        $location = $tz->getLocation();
+        if ($tzName === 'UTC' || $tzName === 'Z' || $location === false || preg_match('/^[+-]\d{2}:\d{2}$/', $tzName)) {
+            return null;
+        }
+        return $tzName;
     }
 
     /**
-     * Fold long lines at 75 octets per RFC 5545 §3.1.
+     * Named timezones used by the events, with the year range they are needed for.
      *
-     * @param list<string> $lines
-     * @return list<string>
+     * @return array<string, array{int, int}>
      */
-    private function fold(array $lines): array
+    private function collectTimezones(): array
     {
-        $folded = [];
-        foreach ($lines as $line) {
-            while (strlen($line) > 75) {
-                $folded[] = substr($line, 0, 75);
-                $line     = ' ' . substr($line, 75);
+        $zones = [];
+        $visit = function (ICalEvent $event) use (&$zones, &$visit): void {
+            foreach ($event->modifiedOccurrences as $override) {
+                $visit($override);
             }
-            $folded[] = $line;
+            if ($event->allDay) {
+                return; // DATE values carry no timezone
+            }
+            $dates = [$event->dtStart, $event->dtEnd, $event->recurrenceId, ...$event->exDates];
+            if ($event->rrule !== null) {
+                array_push($dates, ...$event->rrule->getExDates(), ...$event->rrule->getExtraDates());
+            }
+            foreach ($dates as $date) {
+                $name = $date !== null ? $this->namedTimezone($date) : null;
+                if ($date === null || $name === null) {
+                    continue;
+                }
+                $year          = (int) $date->format('Y');
+                $zones[$name] ??= [$year, $year];
+                $zones[$name]   = [min($zones[$name][0], $year), max($zones[$name][1], $year)];
+            }
+        };
+        foreach ($this->events as $event) {
+            $visit($event);
         }
-        return $folded;
+
+        // Cover recurring series a few years ahead of today
+        $horizon = (int) date('Y') + 5;
+        foreach ($zones as $name => [$from, $to]) {
+            $zones[$name] = [$from - 1, max($to, $horizon)];
+        }
+        return $zones;
     }
 
-    private function escapeText(string $text): string
+    /**
+     * VTIMEZONE component built from PHP's tz database transitions.
+     *
+     * @return list<string>
+     */
+    private function buildTimezoneLines(DateTimeZone $tz, int $fromYear, int $toYear): array
     {
-        return str_replace(
-            ['\\', ';', ',', "\n"],
-            ['\\\\', '\;', '\,', '\n'],
-            $text,
+        $start       = (new DateTimeImmutable("{$fromYear}-01-01 00:00:00", new DateTimeZone('UTC')))->getTimestamp();
+        $end         = (new DateTimeImmutable("{$toYear}-12-31 23:59:59", new DateTimeZone('UTC')))->getTimestamp();
+        $transitions = $tz->getTransitions($start, $end) ?: [];
+
+        $lines = ['BEGIN:VTIMEZONE', 'TZID:' . ICalFormatter::param($tz->getName())];
+
+        $previousOffset = null;
+        foreach ($transitions as $i => $transition) {
+            $offset         = (int) $transition['offset'];
+            $offsetFrom     = $previousOffset ?? $offset;
+            $previousOffset = $offset;
+            // The first entry describes the state at $start, not an actual transition
+            $localStart = (new DateTimeImmutable('@' . ((int) $transition['ts'] + $offsetFrom)))->format('Ymd\THis');
+            $kind       = $transition['isdst'] ? 'DAYLIGHT' : 'STANDARD';
+
+            $lines[] = 'BEGIN:' . $kind;
+            $lines[] = 'DTSTART:' . ($i === 0 ? sprintf('%04d0101T000000', $fromYear) : $localStart);
+            $lines[] = 'TZOFFSETFROM:' . self::formatOffset($offsetFrom);
+            $lines[] = 'TZOFFSETTO:' . self::formatOffset($offset);
+            $lines[] = 'TZNAME:' . ICalFormatter::text((string) $transition['abbr']);
+            $lines[] = 'END:' . $kind;
+        }
+
+        if ($transitions === []) {
+            $offset  = $tz->getOffset(new DateTimeImmutable('@' . $start));
+            array_push(
+                $lines,
+                'BEGIN:STANDARD',
+                sprintf('DTSTART:%04d0101T000000', $fromYear),
+                'TZOFFSETFROM:' . self::formatOffset($offset),
+                'TZOFFSETTO:' . self::formatOffset($offset),
+                'END:STANDARD',
+            );
+        }
+
+        $lines[] = 'END:VTIMEZONE';
+        return $lines;
+    }
+
+    private static function formatOffset(int $seconds): string
+    {
+        $sign    = $seconds < 0 ? '-' : '+';
+        $seconds = abs($seconds);
+        $out     = sprintf('%s%02d%02d', $sign, intdiv($seconds, 3600), intdiv($seconds % 3600, 60));
+        return $seconds % 60 !== 0 ? $out . sprintf('%02d', $seconds % 60) : $out;
+    }
+
+    /**
+     * A midnight EXDATE/RDATE on a timed series denotes the whole day — write it with the
+     * series' start time so it matches the occurrence it refers to.
+     */
+    private function resolveDate(DateTimeImmutable $date, ICalEvent $event): DateTimeImmutable
+    {
+        if ($event->allDay || $date->format('H:i:s') !== '00:00:00' || $event->dtStart->format('H:i:s') === '00:00:00') {
+            return $date;
+        }
+        return $event->dtStart->setDate((int) $date->format('Y'), (int) $date->format('n'), (int) $date->format('j'));
+    }
+
+    /**
+     * @param  list<DateTimeImmutable> $dates
+     * @return list<DateTimeImmutable>
+     */
+    private function uniqueDates(array $dates): array
+    {
+        $unique = [];
+        foreach ($dates as $date) {
+            $unique[$date->format('Y-m-d\TH:i:sP')] = $date;
+        }
+        return array_values($unique);
+    }
+
+    private function withRecurrenceId(ICalEvent $override, ICalEvent $master, string $key): ICalEvent
+    {
+        $original = DateTimeImmutable::createFromFormat('!Y-m-d', $key, $master->dtStart->getTimezone());
+        if ($original === false) {
+            return $override;
+        }
+        $original = $master->dtStart->setDate((int) $original->format('Y'), (int) $original->format('n'), (int) $original->format('j'));
+
+        return new ICalEvent(
+            uid:                 $master->uid,
+            dtStart:             $override->dtStart,
+            dtEnd:               $override->dtEnd,
+            summary:             $override->summary,
+            description:         $override->description,
+            location:            $override->location,
+            rrule:               null,
+            url:                 $override->url,
+            color:               $override->color,
+            categories:          $override->categories,
+            status:              $override->status,
+            alarms:              $override->alarms,
+            organizer:           $override->organizer,
+            organizerName:       $override->organizerName,
+            attendees:           $override->attendees,
+            extensionProperties: $override->extensionProperties,
+            transp:              $override->transp,
+            classification:      $override->classification,
+            priority:            $override->priority,
+            dtStamp:             $override->dtStamp,
+            created:             $override->created,
+            lastModified:        $override->lastModified,
+            sequence:            $override->sequence,
+            recurrenceId:        $original,
+            allDay:              $override->allDay,
+            thisAndFuture:       $override->thisAndFuture,
         );
     }
 

@@ -30,7 +30,7 @@ class AvailabilityLoader implements DayDataLoaderInterface
 {
     private array $byDate = [];
 
-    public function load(DateTimeImmutable $from, DateTimeImmutable $to): void
+    public function load(DateTimeImmutable $from, DateTimeImmutable $to): static
     {
         $rows = $this->db->query(
             'SELECT date, COUNT(*) as bookings, capacity FROM slots
@@ -46,6 +46,8 @@ class AvailabilityLoader implements DayDataLoaderInterface
                 'available' => $row['bookings'] < $row['capacity'],
             ];
         }
+
+        return $this;
     }
 
     public function getData(DateTimeImmutable $date): array
@@ -105,9 +107,15 @@ $config = new CalendarConfig(
 
 // Short TTL — availability changes throughout the day
 $data = $cache->get("availability:{$config->cacheKey()}:{$resourceId}", function () use ($config, $resourceId) {
-    $cal    = Calendar::fromConfig($config);
-    $range  = $cal->getDateRange();
-    return (new AvailabilityLoader($this->db, $resourceId))->computeAll($range['from'], $range['to']);
+    ['from' => $from, 'to' => $to] = Calendar::fromConfig($config)->getDateRange();
+
+    // Run the loader by hand and flatten it into a plain Y-m-d => array map (cache-friendly)
+    $loader = (new AvailabilityLoader($this->db, $resourceId))->load($from, $to);
+    $data   = [];
+    for ($d = $from; $d <= $to; $d = $d->modify('+1 day')) {
+        $data[$d->format('Y-m-d')] = $loader->getData($d);
+    }
+    return $data;
 }, ttl: 60);
 
 $calendar = Calendar::fromConfig($config, $data);
