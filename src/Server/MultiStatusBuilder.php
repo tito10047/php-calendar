@@ -36,8 +36,12 @@ final class MultiStatusBuilder
         // The root is loaded from source rather than built with createElementNS
         // so that the three namespace declarations are real declarations: every
         // child then reuses them instead of repeating xmlns on every element.
+        // The declaration is part of the loaded source on purpose: without it
+        // the document has no encoding, and saveXML() escapes every non-ASCII
+        // character into a numeric entity — a calendar named "Ranná
+        // prechádzka" would come back as "Rann&#xE1;".
         $this->doc->loadXML(sprintf(
-            '<D:multistatus xmlns:D="%s" xmlns:C="%s" xmlns:CS="%s"/>',
+            '<?xml version="1.0" encoding="UTF-8"?><D:multistatus xmlns:D="%s" xmlns:C="%s" xmlns:CS="%s"/>',
             Dav::NS_DAV,
             Dav::NS_CALDAV,
             Dav::NS_CALENDARSERVER,

@@ -555,9 +555,14 @@ final class CalDavServer
         return rtrim($this->baseUrl, '/') . '/';
     }
 
+    /**
+     * A UID usually contains an @, which is a legal path character (RFC 3986
+     * pchar). Percent-encoding it would still work, but every client and every
+     * log would then show a href that does not look like the UID it names.
+     */
     private function eventHref(string $uid): string
     {
-        return $this->collectionHref() . rawurlencode($uid) . '.ics';
+        return $this->collectionHref() . str_replace(['%40', '%3A'], ['@', ':'], rawurlencode($uid)) . '.ics';
     }
 
     private function uidFromHref(string $href): string

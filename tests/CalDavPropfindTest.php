@@ -162,6 +162,27 @@ final class CalDavPropfindTest extends TestCase
         self::assertSame($this->server->handleGet('one')->headers['ETag'], $fromPropfind);
     }
 
+    public function testANonAsciiCalendarNameSurvives(): void
+    {
+        $server = new CalDavServer($this->store, 'Ranná prechádzka', '/caldav/');
+
+        $xpath = $this->xpath($server->handlePropfind($this->propfindBody(['D:displayname']), 0)->body);
+
+        self::assertSame('Ranná prechádzka', $this->nodeText($xpath, '//D:displayname'));
+    }
+
+    public function testEventHrefKeepsTheAtSignOfTheUid(): void
+    {
+        $this->server->handlePut('20260925-abc@budem.sk', $this->ics('20260925-abc@budem.sk'));
+
+        $xpath = $this->xpath($this->server->handlePropfind($this->propfindBody(['D:getetag']), 1)->body);
+
+        self::assertContains(
+            '/caldav/20260925-abc@budem.sk.ics',
+            $this->nodeTexts($xpath, '//D:response/D:href'),
+        );
+    }
+
     public function testResponseIsAMultistatus(): void
     {
         $r = $this->server->handlePropfind('', 0);
