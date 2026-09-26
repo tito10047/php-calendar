@@ -4,9 +4,9 @@ declare(strict_types=1);
 
 namespace Tito10047\Calendar\Server;
 
-use DOMDocument;
 use DOMElement;
 use DOMXPath;
+use Tito10047\Calendar\Xml\SafeXml;
 
 /**
  * The parsed body of a PROPFIND request (RFC 4918 §9.1).
@@ -34,12 +34,8 @@ final class PropfindRequest
         // An empty body means allprop (RFC 4918 §9.1) — and so does a body we
         // cannot parse, because answering something is more useful to a client
         // than a blank stare.
-        if (trim($body) === '') {
-            return new self(self::MODE_ALLPROP);
-        }
-
-        $doc = new DOMDocument();
-        if (!@$doc->loadXML($body, LIBXML_NONET | LIBXML_NOENT)) {
+        $doc = SafeXml::parse($body);
+        if ($doc === null) {
             return new self(self::MODE_ALLPROP);
         }
 

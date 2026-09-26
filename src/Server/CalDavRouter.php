@@ -6,6 +6,7 @@ namespace Tito10047\Calendar\Server;
 
 use DOMDocument;
 use DOMElement;
+use Tito10047\Calendar\Xml\SafeXml;
 
 /**
  * The whole CalDAV tree of one account — discovery included.
@@ -264,9 +265,9 @@ final class CalDavRouter
      */
     private function proppatchProperties(string $body): array
     {
-        $doc = new \DOMDocument();
+        $doc = SafeXml::parse($body);
 
-        if (trim($body) === '' || !@$doc->loadXML($body, LIBXML_NONET | LIBXML_NOENT)) {
+        if ($doc === null) {
             return [];
         }
 

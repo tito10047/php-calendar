@@ -6,9 +6,9 @@ namespace Tito10047\Calendar\Server;
 
 use DateTimeImmutable;
 use DateTimeZone;
-use DOMDocument;
 use DOMElement;
 use DOMXPath;
+use Tito10047\Calendar\Xml\SafeXml;
 
 /**
  * The parsed body of a CalDAV REPORT — calendar-query (RFC 4791 §7.8) or
@@ -40,8 +40,8 @@ final class ReportRequest
 
     public static function fromXml(string $body): self
     {
-        $doc = new DOMDocument();
-        if (trim($body) === '' || !@$doc->loadXML($body, LIBXML_NONET | LIBXML_NOENT)) {
+        $doc = SafeXml::parse($body);
+        if ($doc === null) {
             return new self(self::TYPE_UNSUPPORTED);
         }
 

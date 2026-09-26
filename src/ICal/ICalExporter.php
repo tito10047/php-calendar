@@ -321,11 +321,20 @@ final class ICalExporter
         return $folded;
     }
 
+    /**
+     * RFC 5545 §3.3.11 escaping.
+     *
+     * Every line ending has to go, not only "\n": a lone carriage return is
+     * still a line break to a lenient parser, so text carrying one would be
+     * able to end the property and start another — an ATTACH, an ORGANIZER, or
+     * an early END:VEVENT — out of what was meant to be a description. The
+     * three-way replace runs CRLF first so a pair does not become two escapes.
+     */
     private function escapeText(string $text): string
     {
         return str_replace(
-            ['\\', ';', ',', "\n"],
-            ['\\\\', '\;', '\,', '\n'],
+            ['\\', ';', ',', "\r\n", "\r", "\n"],
+            ['\\\\', '\;', '\,', '\n', '\n', '\n'],
             $text,
         );
     }
