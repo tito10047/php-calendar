@@ -34,6 +34,34 @@ final class CalDavRouterTest extends TestCase
     }
 
     // -------------------------------------------------------------------------
+    // Path parsing
+    // -------------------------------------------------------------------------
+
+    /**
+     * An encoded slash belongs to the segment it sits in, never to the path.
+     *
+     * Decoding the whole path before splitting it made "%2f" a delimiter, so
+     * one segment silently became two. Nothing here addresses anything
+     * positional today, which is why this was latent rather than exploitable
+     * — and exactly why it is worth a test before something does.
+     */
+    public function testAnEncodedSlashDoesNotBecomeASeparator(): void
+    {
+        $response = $this->router->handle('PROPFIND', '/caldav/calendars/jana/wa%2flk/', $this->propfind(['D:displayname']));
+
+        // "wa/lk" is not a calendar of this account, so it is a 404 — and not
+        // a walk down into some other collection.
+        self::assertSame(404, $response->statusCode);
+    }
+
+    public function testAnEncodedSegmentIsStillMatchedByItsRealName(): void
+    {
+        $response = $this->router->handle('PROPFIND', '/caldav/calendars/jana/w%61lk/', $this->propfind(['D:displayname']));
+
+        self::assertSame(207, $response->statusCode);
+    }
+
+    // -------------------------------------------------------------------------
     // Discovery
     // -------------------------------------------------------------------------
 

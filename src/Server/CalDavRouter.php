@@ -300,6 +300,18 @@ final class CalDavRouter
     /**
      * The path below the base, split — or null when the path is not ours.
      *
+     * **Split first, decode after.** Decoding the whole path and then
+     * exploding on "/" lets an encoded slash inside one segment turn into a
+     * separator: `%2f` — or `%252f` once a framework router has decoded the
+     * path once already — becomes a real delimiter and one segment silently
+     * becomes two. RFC 3986 says the opposite: a slash is only a delimiter
+     * when it is not percent-encoded, and what is inside a segment belongs to
+     * that segment.
+     *
+     * Nothing in this router addresses anything positional or file-shaped
+     * today, so it is not exploitable as it stands. It is the class of bug
+     * that becomes one the moment a segment starts naming a path.
+     *
      * @return list<string>|null
      */
     private function segmentsOf(string $path): ?array
@@ -310,16 +322,22 @@ final class CalDavRouter
             return null;
         }
 
-        $path = rawurldecode($path);
         $base = rtrim($this->basePath, '/');
 
+        // Compared as it arrived, not decoded: the base has nothing in it that
+        // would ever be percent-encoded, and comparing a decoded prefix while
+        // cutting an encoded one is how substr() ends up off by a few bytes.
         if ($path !== $base && !str_starts_with($path, $this->basePath)) {
             return null;
         }
 
         $relative = trim(substr($path, strlen($base)), '/');
 
-        return $relative === '' ? [] : explode('/', $relative);
+        if ($relative === '') {
+            return [];
+        }
+
+        return array_map(rawurldecode(...), explode('/', $relative));
     }
 
     private function uidOf(string $resource): string
