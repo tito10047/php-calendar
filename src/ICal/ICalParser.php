@@ -289,6 +289,12 @@ final class ICalParser
             return null;
         }
 
+        // An event is all-day when its DTSTART is a DATE value — either declared
+        // (VALUE=DATE) or recognisable by shape. Clients disagree on sending the
+        // parameter; the shape never lies.
+        $allDay = strtoupper($dtStartEntry['params']['VALUE'] ?? '') === 'DATE'
+            || preg_match('/^\d{8}$/', trim($dtStartEntry['value'])) === 1;
+
         $dtEnd = null;
         if (isset($props['DTEND'])) {
             $e = $props['DTEND'][0];
@@ -341,7 +347,8 @@ final class ICalParser
         $categories = [];
         if (isset($props['CATEGORIES'])) {
             foreach ($props['CATEGORIES'] as $catEntry) {
-                foreach (explode(',', $catEntry['value']) as $cat) {
+                foreach (preg_split('/(?<!\\\\),/', $catEntry['value']) ?: [] as $cat) {
+                    $cat = (string) $this->unescapeText($cat);
                     $cat = trim($cat);
                     if ($cat !== '') {
                         $categories[] = $cat;
@@ -401,9 +408,9 @@ final class ICalParser
             uid:                 $uid,
             dtStart:             $dtStart,
             dtEnd:               $dtEnd,
-            summary:             $this->firstValue($props, 'SUMMARY'),
-            description:         $this->firstValue($props, 'DESCRIPTION'),
-            location:            $this->firstValue($props, 'LOCATION'),
+            summary:             $this->unescapeText($this->firstValue($props, 'SUMMARY')),
+            description:         $this->unescapeText($this->firstValue($props, 'DESCRIPTION')),
+            location:            $this->unescapeText($this->firstValue($props, 'LOCATION')),
             rrule:               $rrule,
             exDates:             $exDates,
             url:                 $this->firstValue($props, 'URL'),
@@ -423,6 +430,7 @@ final class ICalParser
             lastModified:        $lastModEntry !== null ? $this->parseDateTime($lastModEntry['value'], $lastModEntry['params'], $tzMap) : null,
             sequence:            (int) ($this->firstValue($props, 'SEQUENCE') ?? 0),
             recurrenceId:        $recurrenceEntry !== null ? $this->parseDateTime($recurrenceEntry['value'], $recurrenceEntry['params'], $tzMap) : null,
+            allDay:              $allDay,
         );
     }
 
@@ -436,9 +444,11 @@ final class ICalParser
     {
         $value = trim($value);
 
-        // Date-only: 20241101
+        // Date-only: 20241101 — the leading "!" resets the time, otherwise
+        // createFromFormat() fills it from the current clock and a date-only
+        // value silently carries the hour the import happened to run at.
         if (preg_match('/^\d{8}$/', $value)) {
-            return DateTimeImmutable::createFromFormat('Ymd', $value, new DateTimeZone('UTC')) ?: null;
+            return DateTimeImmutable::createFromFormat('!Ymd', $value, new DateTimeZone('UTC')) ?: null;
         }
 
         // DateTime with Z suffix (UTC): 20241101T120000Z
@@ -505,8 +515,8 @@ final class ICalParser
 
         return new ICalTodo(
             uid:             $uid,
-            summary:         $this->firstValue($props, 'SUMMARY'),
-            description:     $this->firstValue($props, 'DESCRIPTION'),
+            summary:         $this->unescapeText($this->firstValue($props, 'SUMMARY')),
+            description:     $this->unescapeText($this->firstValue($props, 'DESCRIPTION')),
             due:             $due,
             dtStart:         $dtStart,
             status:          $this->firstValue($props, 'STATUS') ?? 'NEEDS-ACTION',
@@ -528,8 +538,8 @@ final class ICalParser
         return new VAlarm(
             action:      strtoupper($action),
             trigger:     $trigger,
-            description: $this->firstValue($props, 'DESCRIPTION'),
-            summary:     $this->firstValue($props, 'SUMMARY'),
+            description: $this->unescapeText($this->firstValue($props, 'DESCRIPTION')),
+            summary:     $this->unescapeText($this->firstValue($props, 'SUMMARY')),
         );
     }
 
@@ -539,5 +549,30 @@ final class ICalParser
     private function firstValue(array $props, string $name): ?string
     {
         return isset($props[$name]) ? $props[$name][0]['value'] : null;
+    }
+
+    /**
+     * Undo RFC 5545 §3.3.11 text escaping.
+     *
+     * A DESCRIPTION arrives as one line with \n where the newlines were, and
+     * with commas and semicolons backslashed. Handing that through unchanged
+     * means a note comes back with visible backslashes and a line break that
+     * never happens — and anything reading the first line of a description
+     * reads the whole thing instead.
+     */
+    private function unescapeText(?string $value): ?string
+    {
+        if ($value === null) {
+            return null;
+        }
+
+        return preg_replace_callback(
+            '/\\\\(.)/',
+            static fn (array $match): string => match ($match[1]) {
+                'n', 'N' => "\n",
+                default => $match[1],
+            },
+            $value,
+        ) ?? $value;
     }
 }

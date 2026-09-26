@@ -458,4 +458,49 @@ class ICalTest extends TestCase
         $this->assertStringNotContainsString('CATEGORIES:', $ics);
         $this->assertStringNotContainsString('STATUS:', $ics);
     }
+
+    public function testEscapedTextComesBackUnescaped(): void
+    {
+        $ics = (new ICalExporter())
+            ->addEvent(
+                title:       'Beh, 10 km; ráno',
+                from:        new DateTimeImmutable('2026-09-25T06:00:00Z'),
+                description: "10/5\nPrvý raz celá desiatka.",
+                uid:         'walk@budem.sk',
+            )
+            ->export();
+
+        $event = (new ICalParser())->parseString($ics)[0];
+
+        self::assertSame('Beh, 10 km; ráno', $event->summary);
+        self::assertSame("10/5\nPrvý raz celá desiatka.", $event->description);
+    }
+
+    /**
+     * A carriage return used to walk straight through escapeText(), and a
+     * lenient parser reads one as a line break — which is a property boundary.
+     * Text that carries one must not be able to start an ATTACH, an ORGANIZER,
+     * or an early END:VEVENT.
+     */
+    public function testACarriageReturnCannotInjectAProperty(): void
+    {
+        $ics = (new ICalExporter())
+            ->addEvent(
+                title:       "Beh\rATTACH:https://evil.example/x",
+                from:        new DateTimeImmutable('2026-09-25T06:00:00Z'),
+                description: "Prvý riadok\r\nDruhý\rEND:VEVENT",
+                uid:         'walk@budem.sk',
+            )
+            ->export();
+
+        // No bare carriage return survives, so nothing in the text can be the
+        // start of a line — which is the only place a property may begin.
+        self::assertStringNotContainsString("\r", str_replace("\r\n", '', $ics));
+
+        $events = (new ICalParser())->parseString($ics);
+
+        self::assertCount(1, $events);
+        self::assertSame("Beh\nATTACH:https://evil.example/x", $events[0]->summary);
+        self::assertSame("Prvý riadok\nDruhý\nEND:VEVENT", $events[0]->description);
+    }
 }

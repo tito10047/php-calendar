@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tito10047\Calendar\ICal;
 
 use DateTimeImmutable;
+use Tito10047\Calendar\Xml\SafeXml;
 
 /**
  * Minimal CalDAV client for fetching events from a CalDAV server.
@@ -146,16 +147,13 @@ final class CalDAVClient
      */
     private function parseMultiResponse(string $xmlBody): array
     {
-        if (trim($xmlBody) === '') {
-            return [];
-        }
+        // The body comes off a server we do not control, so it is parsed the
+        // same guarded way a request body is — an entity pointing at
+        // file:///etc/passwd reads our filesystem just as readily from this
+        // direction.
+        $dom = SafeXml::parse($xmlBody);
 
-        $prev   = libxml_use_internal_errors(true);
-        $dom    = new \DOMDocument();
-        $loaded = $dom->loadXML($xmlBody);
-        libxml_use_internal_errors($prev);
-
-        if (!$loaded) {
+        if ($dom === null) {
             return [];
         }
 
@@ -188,16 +186,9 @@ final class CalDAVClient
      */
     private function extractHrefs(string $xmlBody): array
     {
-        if (trim($xmlBody) === '') {
-            return [];
-        }
+        $dom = SafeXml::parse($xmlBody);
 
-        $prev   = libxml_use_internal_errors(true);
-        $dom    = new \DOMDocument();
-        $loaded = $dom->loadXML($xmlBody);
-        libxml_use_internal_errors($prev);
-
-        if (!$loaded) {
+        if ($dom === null) {
             return [];
         }
 

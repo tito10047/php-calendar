@@ -18,6 +18,7 @@ use Tito10047\Calendar\Recurrence\RecurrenceRule;
  * P1 fields: alarms, organizer, organizerName, attendees
  * P2 fields: extensionProperties (X-*), transp, classification, priority,
  *            dtStamp, created, lastModified, sequence, recurrenceId, modifiedOccurrences
+ * K1 fields: allDay
  */
 final class ICalEvent
 {
@@ -28,6 +29,10 @@ final class ICalEvent
      * @param list<Attendee>               $attendees
      * @param array<string, string>        $extensionProperties  X-* custom properties
      * @param array<string, ICalEvent>     $modifiedOccurrences  RECURRENCE-ID overrides keyed by Y-m-d
+     *
+     * $allDay marks a DATE-valued event (RFC 5545 §3.3.4): no time, no timezone.
+     * Its $dtEnd — like DTEND in the format itself — is exclusive, so a one-day
+     * event that starts on 2026-09-25 ends on 2026-09-26.
      */
     public function __construct(
         public readonly string $uid,
@@ -59,7 +64,22 @@ final class ICalEvent
         public readonly int $sequence = 0,
         public readonly ?DateTimeImmutable $recurrenceId = null,
         public readonly array $modifiedOccurrences = [],
+        // K1
+        public readonly bool $allDay = false,
     ) {
+    }
+
+    /**
+     * The last day the event covers, for an all-day event whose DTEND is exclusive.
+     * Returns null for timed events and for all-day events without an end.
+     */
+    public function lastDay(): ?DateTimeImmutable
+    {
+        if (!$this->allDay || $this->dtEnd === null) {
+            return null;
+        }
+
+        return $this->dtEnd->modify('-1 day')->setTime(0, 0, 0);
     }
 
     public function isRecurring(): bool
@@ -204,6 +224,7 @@ final class ICalEvent
             'classification'     => $this->classification?->value,
             'priority'           => $this->priority,
             'sequence'           => $this->sequence,
+            'allDay'             => $this->allDay,
             'dtStart'            => $this->dtStart->format('Y-m-d H:i:s'),
             'dtEnd'              => $this->dtEnd?->format('Y-m-d H:i:s'),
             'dtStamp'            => $this->dtStamp?->format('Y-m-d H:i:s'),
@@ -258,6 +279,7 @@ final class ICalEvent
         ?int $sequence = null,
         mixed $recurrenceId = 'KEEP',
         ?array $modifiedOccurrences = null,
+        ?bool $allDay = null,
     ): self {
         return new self(
             uid:                  $uid ?? $this->uid,
@@ -286,6 +308,7 @@ final class ICalEvent
             sequence:             $sequence ?? $this->sequence,
             recurrenceId:         $recurrenceId === 'KEEP' ? $this->recurrenceId : $recurrenceId,
             modifiedOccurrences:  $modifiedOccurrences ?? $this->modifiedOccurrences,
+            allDay:               $allDay ?? $this->allDay,
         );
     }
 

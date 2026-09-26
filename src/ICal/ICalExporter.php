@@ -60,12 +60,13 @@ final class ICalExporter
         ?string $color = null,
         array $categories = [],
         ?EventStatus $status = null,
+        bool $allDay = false,
     ): self {
         $clone           = clone $this;
         $clone->events[] = new ICalEvent(
             uid:         $uid ?? $this->generateUid(),
-            dtStart:     $from,
-            dtEnd:       $to,
+            dtStart:     $allDay ? $from->setTime(0, 0, 0) : $from,
+            dtEnd:       $allDay ? $to?->setTime(0, 0, 0) : $to,
             summary:     $title,
             description: $description,
             location:    $location,
@@ -74,6 +75,7 @@ final class ICalExporter
             color:       $color,
             categories:  $categories,
             status:      $status,
+            allDay:      $allDay,
         );
         return $clone;
     }
@@ -92,11 +94,12 @@ final class ICalExporter
         ?string $color = null,
         array $categories = [],
         ?EventStatus $status = null,
+        bool $allDay = false,
     ): self {
         $clone           = clone $this;
         $clone->events[] = new ICalEvent(
             uid:         $uid ?? $this->generateUid(),
-            dtStart:     $start,
+            dtStart:     $allDay ? $start->setTime(0, 0, 0) : $start,
             dtEnd:       null,
             summary:     $title,
             description: $description,
@@ -106,6 +109,7 @@ final class ICalExporter
             color:       $color,
             categories:  $categories,
             status:      $status,
+            allDay:      $allDay,
         );
         return $clone;
     }
@@ -189,12 +193,15 @@ final class ICalExporter
         if ($event->sequence !== 0) {
             $lines[] = 'SEQUENCE:' . $event->sequence;
         }
-        $lines[] = $this->formatDtProp('DTSTART', $event->dtStart);
+        $lines[] = $this->formatDtProp('DTSTART', $event->dtStart, $event->allDay);
         if ($event->dtEnd !== null) {
-            $lines[] = $this->formatDtProp('DTEND', $event->dtEnd);
+            $lines[] = $this->formatDtProp('DTEND', $event->dtEnd, $event->allDay);
+        } elseif ($event->allDay) {
+            // RFC 5545 §3.6.1: DTEND is exclusive, so one day ends on the next one.
+            $lines[] = $this->formatDtProp('DTEND', $event->dtStart->modify('+1 day'), true);
         }
         if ($event->recurrenceId !== null) {
-            $lines[] = $this->formatDtProp('RECURRENCE-ID', $event->recurrenceId);
+            $lines[] = $this->formatDtProp('RECURRENCE-ID', $event->recurrenceId, $event->allDay);
         }
         $lines[] = 'SUMMARY:' . $this->escapeText($event->summary ?? '');
         if ($event->description !== null) {
@@ -266,11 +273,20 @@ final class ICalExporter
     /**
      * Serialise a datetime property respecting the original timezone.
      *
+     * All-day             → "PROPNAME;VALUE=DATE:YYYYMMDD"
      * UTC / numeric-offset → "PROPNAME:YYYYMMDDTHHmmssZ"
      * Named IANA timezone  → "PROPNAME;TZID=Zone/Name:YYYYMMDDTHHmmss"
+     *
+     * An all-day property carries no time and therefore no timezone — the date
+     * is written exactly as it stands, never converted, so midnight +01:00
+     * cannot become the previous day in UTC.
      */
-    private function formatDtProp(string $propName, DateTimeImmutable $dt): string
+    private function formatDtProp(string $propName, DateTimeImmutable $dt, bool $allDay = false): string
     {
+        if ($allDay) {
+            return $propName . ';VALUE=DATE:' . $dt->format('Ymd');
+        }
+
         $tzName = $dt->getTimezone()->getName();
 
         // Numeric offset (e.g. +01:00, -05:30) — normalise to UTC
@@ -305,11 +321,20 @@ final class ICalExporter
         return $folded;
     }
 
+    /**
+     * RFC 5545 §3.3.11 escaping.
+     *
+     * Every line ending has to go, not only "\n": a lone carriage return is
+     * still a line break to a lenient parser, so text carrying one would be
+     * able to end the property and start another — an ATTACH, an ORGANIZER, or
+     * an early END:VEVENT — out of what was meant to be a description. The
+     * three-way replace runs CRLF first so a pair does not become two escapes.
+     */
     private function escapeText(string $text): string
     {
         return str_replace(
-            ['\\', ';', ',', "\n"],
-            ['\\\\', '\;', '\,', '\n'],
+            ['\\', ';', ',', "\r\n", "\r", "\n"],
+            ['\\\\', '\;', '\,', '\n', '\n', '\n'],
             $text,
         );
     }
